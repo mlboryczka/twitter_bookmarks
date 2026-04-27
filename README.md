@@ -61,7 +61,25 @@ and walk through the wizard again.
 
 ## Design decisions made during build
 
-(Add any decisions made beyond the original spec here.)
+- **`bookmarks.has_full_thread` is a "ready-to-classify" flag, not a
+  multi-tweet indicator.** The thread reconstructor always writes a
+  `bookmark_threads` row (single-tweet or multi-tweet) and sets
+  `has_full_thread=true` when reconstruction has been attempted. This way
+  the classifier worker can use a single predicate to find bookmarks
+  whose text is finalized. `thread_root_id` is only set when there's an
+  actual multi-tweet chain.
+- **Bookmark `bookmarked_at` defaults to ingestion time.** The X
+  bookmarks endpoint does not return a per-bookmark timestamp, so we
+  approximate with the wall-clock at ingestion. For the backfill, all
+  bookmarks pulled in the same backfill batch share the same timestamp;
+  ordering within a backfill is preserved by the X API's "most recent
+  first" page order via the `bookmark_threads` reconstruction order. The
+  weekly digest's "bookmarks added this week" filter therefore really
+  means "bookmarks ingested this week."
+- **`x_api/client.request` does not auto-log on success.** Endpoint
+  wrappers compute cost from the response payload and log a single row
+  to `api_calls` per request. Only error responses are auto-logged from
+  the client.
 
 ## Known limitations / future work
 
