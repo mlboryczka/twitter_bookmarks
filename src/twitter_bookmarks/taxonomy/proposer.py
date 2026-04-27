@@ -317,6 +317,26 @@ async def propose_taxonomy(session: AsyncSession) -> TaxonomyProposalPayload:
 
     payload = TaxonomyProposalPayload.model_validate(tool_input)
 
+    # Dedupe: Sonnet sometimes lists the same tweet_id in multiple
+    # categories. Keep the first occurrence so the proposal page (and
+    # later finalize) sees each bookmark exactly once.
+    seen_tweet_ids: set[str] = set()
+    duplicates_removed = 0
+    for cat in payload.categories:
+        kept: list[ProposedBookmark] = []
+        for bm in cat.bookmarks:
+            if bm.tweet_id in seen_tweet_ids:
+                duplicates_removed += 1
+                continue
+            seen_tweet_ids.add(bm.tweet_id)
+            kept.append(bm)
+        cat.bookmarks = kept
+    if duplicates_removed:
+        logger.warning(
+            "Removed %d duplicate tweet_id assignments from Sonnet's output",
+            duplicates_removed,
+        )
+
     # Sanity check: warn (don't fail) if Sonnet skipped or invented bookmarks.
     assigned: dict[str, str] = {}
     for cat in payload.categories:
