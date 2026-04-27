@@ -320,11 +320,16 @@ async def propose_taxonomy(session: AsyncSession) -> TaxonomyProposalPayload:
     # Dedupe: Sonnet sometimes lists the same tweet_id in multiple
     # categories. Keep the first occurrence so the proposal page (and
     # later finalize) sees each bookmark exactly once.
+    # Also drop hallucinated tweet_ids that aren't in the corpus.
     seen_tweet_ids: set[str] = set()
     duplicates_removed = 0
+    hallucinations_removed = 0
     for cat in payload.categories:
         kept: list[ProposedBookmark] = []
         for bm in cat.bookmarks:
+            if bm.tweet_id not in sample_ids:
+                hallucinations_removed += 1
+                continue
             if bm.tweet_id in seen_tweet_ids:
                 duplicates_removed += 1
                 continue
@@ -336,6 +341,11 @@ async def propose_taxonomy(session: AsyncSession) -> TaxonomyProposalPayload:
             "Removed %d duplicate tweet_id assignments from Sonnet's output",
             duplicates_removed,
         )
+    if hallucinations_removed:
+        logger.warning(
+            "Removed %d hallucinated tweet_ids not in the bookmark corpus",
+            hallucinations_removed,
+        )
 
     # Sanity check: warn (don't fail) if Sonnet skipped or invented bookmarks.
     assigned: dict[str, str] = {}
@@ -343,7 +353,7 @@ async def propose_taxonomy(session: AsyncSession) -> TaxonomyProposalPayload:
         for bm in cat.bookmarks:
             assigned[bm.tweet_id] = cat.slug
     missing = sample_ids - set(assigned.keys())
-    extra = set(assigned.keys()) - sample_ids
+    extra: set[str] = set()  # already filtered above
     if missing:
         logger.warning(
             "Sonnet skipped %d bookmarks; will land them in 'misc' on finalize: %s",

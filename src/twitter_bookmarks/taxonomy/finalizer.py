@@ -127,6 +127,12 @@ async def finalize_taxonomy(
         cat_rows[slug] = cat
     await session.flush()  # make ids available
 
+    # Pre-fetch the set of valid bookmark tweet_ids so we can defend
+    # against hallucinated/missing ids in older drafts.
+    valid_tweet_ids: set[str] = set(
+        (await session.execute(select(Bookmark.tweet_id))).scalars().all()
+    )
+
     # Pre-fetch text snapshots for any bookmarks Sonnet placed (for feedback rows).
     moved_tweet_ids = {m["tweet_id"] for m in moves}
     snapshots: dict[str, str] = {}
@@ -167,6 +173,9 @@ async def finalize_taxonomy(
         for bm in cat_payload.get("bookmarks", []):
             tweet_id = bm.get("tweet_id")
             if not tweet_id:
+                continue
+            if tweet_id not in valid_tweet_ids:
+                # Sonnet hallucinated this tweet_id — skip rather than crash.
                 continue
             if tweet_id in seen_tweet_ids:
                 duplicates += 1
