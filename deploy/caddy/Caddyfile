@@ -1,0 +1,29 @@
+# Replace yourdomain.com with the domain you've pointed at this VPS.
+# Caddy handles HTTPS automatically via Let's Encrypt.
+
+yourdomain.com {
+	encode gzip zstd
+
+	reverse_proxy 127.0.0.1:8000 {
+		# Pass the original Host header through so FastAPI builds correct
+		# absolute URLs.
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	header {
+		# Recommended security headers.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Don't expose Caddy's version.
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/twitter_bookmarks.log
+		format console
+	}
+}

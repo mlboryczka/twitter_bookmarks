@@ -1,0 +1,26 @@
+[Unit]
+Description=twitter_bookmarks: personal bookmark digest
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=app
+Group=app
+WorkingDirectory=/opt/twitter_bookmarks
+EnvironmentFile=/opt/twitter_bookmarks/.env
+ExecStart=/usr/local/bin/uv run python -m twitter_bookmarks.main
+Restart=on-failure
+RestartSec=5s
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/twitter_bookmarks
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=twitter_bookmarks
+
+[Install]
+WantedBy=multi-user.target
