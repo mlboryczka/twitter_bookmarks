@@ -6,7 +6,6 @@
   .bm-card .meta { font-size: 0.85em; }
   .bm-card .text { font-size: 0.9em; margin: 0.4em 0; }
   .bm-card .controls { display: flex; gap: 0.5em; align-items: center; flex-wrap: wrap; margin-top: 0.4em; font-size: 0.85em; }
-  .bm-card .controls form { margin: 0; }
   .bm-card .controls select, .bm-card .controls input[type=text] { padding: 0.2em 0.4em; font-size: 0.85em; height: auto; margin: 0; }
   .bm-card .controls button { padding: 0.2em 0.6em; font-size: 0.85em; height: auto; margin: 0; }
   details.cat { border: 1px solid var(--pico-muted-border-color); border-radius: 0.5em; padding: 0.75em 1em; margin-bottom: 0.75em; background: var(--pico-card-background-color); }
@@ -14,97 +13,145 @@
   details.cat > summary { cursor: pointer; font-weight: 600; font-size: 1.1em; }
   .cat-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em; margin: 0.5em 0; }
   .cat-meta input, .cat-meta textarea { font-size: 0.95em; }
+  .merge-controls { display: flex; gap: 0.5em; align-items: center; margin-bottom: 0.75em; font-size: 0.9em; }
+  .merge-controls select { width: auto; flex: 1; padding: 0.2em 0.4em; height: auto; margin: 0; }
+  .merge-controls button { padding: 0.3em 0.8em; height: auto; margin: 0; }
 </style>
+
+<!-- Empty form at top — category metadata + finalize button reference it via form="finalize-form" -->
+<form id="finalize-form" action="/setup/proposal/finalize" method="post"></form>
 
 <h1>Proposed taxonomy</h1>
 <p class="meta">{{ proposal.overall_rationale }}</p>
-<p class="meta"><strong>{{ proposal.total_bookmarks }}</strong> bookmarks across <strong>{{ proposal.categories|length }}</strong> categories. Move any bookmark that's in the wrong place. Add a one-line "why" if you want to teach the classifier.</p>
+<p class="meta"><strong>{{ proposal.total_bookmarks }}</strong> bookmarks across <strong>{{ proposal.categories|length }}</strong> categories. Move any bookmark in the wrong place. Add a one-line "why" to teach the classifier.</p>
 
-<form action="/setup/proposal/finalize" method="post">
-  <div id="categories">
-    {% for cat in proposal.categories %}
-      <details class="cat" {% if loop.index <= 3 %}open{% endif %}>
-        <summary>{{ cat.name }} <span class="meta">({{ cat.bookmarks|length }})</span></summary>
+<div id="categories">
+  {% for cat in proposal.categories %}
+    <details class="cat" {% if loop.index <= 3 %}open{% endif %}>
+      <summary>{{ cat.name }} <span class="meta">({{ cat.bookmarks|length }})</span></summary>
 
-        <input type="hidden" name="slug[]" value="{{ cat.slug }}">
-        <div class="cat-meta">
-          <label>
-            <small>Name</small>
-            <input type="text" name="name[]" value="{{ cat.name }}" required>
-          </label>
-          <label>
-            <small>Description</small>
-            <textarea name="description[]" rows="2" required>{{ cat.description }}</textarea>
-          </label>
-        </div>
-        {% if cat.rationale %}
-          <p class="meta"><em>Why this category:</em> {{ cat.rationale }}</p>
-        {% endif %}
+      <input type="hidden" name="slug[]" value="{{ cat.slug }}" form="finalize-form">
+      <div class="cat-meta">
+        <label>
+          <small>Name</small>
+          <input type="text" name="name[]" value="{{ cat.name }}" required form="finalize-form">
+        </label>
+        <label>
+          <small>Description</small>
+          <textarea name="description[]" rows="2" required form="finalize-form">{{ cat.description }}</textarea>
+        </label>
+      </div>
+      {% if cat.rationale %}
+        <p class="meta"><em>Why this category:</em> {{ cat.rationale }}</p>
+      {% endif %}
 
-        <div class="controls" style="margin-bottom: 0.75em;">
-          <input type="hidden" name="source_slug" value="{{ cat.slug }}" form="">
-          <select name="target_slug" form="" aria-label="merge this category into">
-            <option value="">merge this category into…</option>
-            {% for other in proposal.categories %}
-              {% if other.slug != cat.slug %}
-                <option value="{{ other.slug }}">{{ other.name }}</option>
-              {% endif %}
-            {% endfor %}
-          </select>
-          <button type="button"
-                  class="secondary"
-                  hx-post="/setup/proposal/merge"
-                  hx-include="closest .controls"
-                  hx-confirm="Merge {{ cat.name }} ({{ cat.bookmarks|length }} bookmarks) into the selected category? The {{ cat.name }} category will be removed.">
-            merge
-          </button>
-        </div>
-
-        <div class="bookmarks">
-          {% for bm in cat.bookmarks %}
-            <div class="bm-card">
-              <div>
-                <strong>@{{ bm.author_username }}</strong>
-                {% if bm.created_at %}<span class="meta"> · {{ bm.created_at.strftime('%Y-%m-%d') }}</span>{% endif %}
-                <a class="meta" href="https://x.com/i/web/status/{{ bm.tweet_id }}" target="_blank" rel="noopener">view on x →</a>
-              </div>
-              {% if bm.gist %}<div class="text"><strong>Gist:</strong> {{ bm.gist }}</div>{% endif %}
-              <div class="text meta">{{ bm.text_excerpt }}</div>
-              <div class="controls">
-                <input type="hidden" name="tweet_id" value="{{ bm.tweet_id }}" form="">
-                <select name="to_slug" form="" aria-label="move to category">
-                  <option value="">move to…</option>
-                  {% for other in proposal.categories %}
-                    {% if other.slug != cat.slug %}
-                      <option value="{{ other.slug }}">{{ other.name }}</option>
-                    {% endif %}
-                  {% endfor %}
-                </select>
-                <input type="text" name="feedback" placeholder="why? (optional)" maxlength="200" form="">
-                <button type="button"
-                        class="secondary"
-                        hx-post="/setup/proposal/move"
-                        hx-include="closest .controls">
-                  move
-                </button>
-              </div>
-            </div>
-          {% else %}
-            <p class="meta"><em>No bookmarks in this category.</em></p>
+      <div class="merge-controls">
+        <select id="merge-target-{{ cat.slug }}" aria-label="merge this category into">
+          <option value="">merge this category into…</option>
+          {% for other in proposal.categories %}
+            {% if other.slug != cat.slug %}
+              <option value="{{ other.slug }}">{{ other.name }}</option>
+            {% endif %}
           {% endfor %}
-        </div>
-      </details>
-    {% endfor %}
-  </div>
+        </select>
+        <button type="button" class="secondary" onclick="mergeCategory('{{ cat.slug }}', '{{ cat.name|e }}', {{ cat.bookmarks|length }})">
+          merge
+        </button>
+      </div>
 
-  <div style="margin-top: 1em; display: flex; gap: 0.5em;">
-    <button type="button"
-            hx-post="/setup/proposal/regenerate"
-            hx-confirm="Regenerate the proposal? Your edits and moves will be lost."
-            class="contrast">
-      Regenerate proposal
-    </button>
-    <button type="submit">Finalize taxonomy</button>
-  </div>
-</form>
+      <div class="bookmarks">
+        {% for bm in cat.bookmarks %}
+          <div class="bm-card">
+            <div>
+              <strong>@{{ bm.author_username }}</strong>
+              {% if bm.created_at %}<span class="meta"> · {{ bm.created_at.strftime('%Y-%m-%d') }}</span>{% endif %}
+              <a class="meta" href="https://x.com/i/web/status/{{ bm.tweet_id }}" target="_blank" rel="noopener">view on x →</a>
+            </div>
+            {% if bm.gist %}<div class="text"><strong>Gist:</strong> {{ bm.gist }}</div>{% endif %}
+            <div class="text meta">{{ bm.text_excerpt }}</div>
+            <div class="controls">
+              <select id="move-target-{{ bm.tweet_id }}" aria-label="move to category">
+                <option value="">move to…</option>
+                {% for other in proposal.categories %}
+                  {% if other.slug != cat.slug %}
+                    <option value="{{ other.slug }}">{{ other.name }}</option>
+                  {% endif %}
+                {% endfor %}
+              </select>
+              <input type="text" id="move-feedback-{{ bm.tweet_id }}" placeholder="why? (optional)" maxlength="200">
+              <button type="button" class="secondary" onclick="moveBookmark('{{ bm.tweet_id }}')">
+                move
+              </button>
+            </div>
+          </div>
+        {% else %}
+          <p class="meta"><em>No bookmarks in this category.</em></p>
+        {% endfor %}
+      </div>
+    </details>
+  {% endfor %}
+</div>
+
+<div style="margin-top: 1em; display: flex; gap: 0.5em;">
+  <button type="button" class="contrast" onclick="regenerateProposal()">
+    Regenerate proposal
+  </button>
+  <button type="submit" form="finalize-form">Finalize taxonomy</button>
+</div>
+
+<script>
+async function mergeCategory(sourceSlug, sourceName, sourceCount) {
+  const sel = document.getElementById('merge-target-' + sourceSlug);
+  const targetSlug = sel.value;
+  if (!targetSlug) {
+    alert('Pick a target category from the dropdown first.');
+    return;
+  }
+  const targetName = sel.options[sel.selectedIndex].text;
+  if (!confirm(`Merge "${sourceName}" (${sourceCount} bookmarks) into "${targetName}"? "${sourceName}" will be removed.`)) {
+    return;
+  }
+  const body = new URLSearchParams();
+  body.append('source_slug', sourceSlug);
+  body.append('target_slug', targetSlug);
+  const r = await fetch('/setup/proposal/merge', { method: 'POST', body });
+  if (!r.ok) {
+    alert('Merge failed: ' + r.status + ' ' + (await r.text()));
+    return;
+  }
+  window.location.reload();
+}
+
+async function moveBookmark(tweetId) {
+  const sel = document.getElementById('move-target-' + tweetId);
+  const fb = document.getElementById('move-feedback-' + tweetId);
+  const toSlug = sel.value;
+  if (!toSlug) {
+    alert('Pick a target category from the dropdown first.');
+    return;
+  }
+  const body = new URLSearchParams();
+  body.append('tweet_id', tweetId);
+  body.append('to_slug', toSlug);
+  body.append('feedback', fb.value || '');
+  const r = await fetch('/setup/proposal/move', { method: 'POST', body });
+  if (!r.ok) {
+    alert('Move failed: ' + r.status + ' ' + (await r.text()));
+    return;
+  }
+  window.location.reload();
+}
+
+async function regenerateProposal() {
+  if (!confirm('Regenerate the proposal? Your edits and moves will be lost.')) {
+    return;
+  }
+  const r = await fetch('/setup/proposal/regenerate', { method: 'POST' });
+  if (!r.ok && r.status !== 303) {
+    alert('Regenerate failed: ' + r.status);
+    return;
+  }
+  window.location.href = '/setup/proposal';
+}
+</script>
 {% endblock %}
