@@ -148,8 +148,11 @@ async def finalize_taxonomy(
         ).all():
             snapshots[tid] = thread_text or leaf_text or ""
 
-    # Write classifications from the proposal JSON.
+    # Write classifications from the proposal JSON. Sonnet sometimes
+    # duplicates a tweet_id across categories; first occurrence wins.
     classification_count = 0
+    seen_tweet_ids: set[str] = set()
+    duplicates = 0
     for cat_payload in proposal_categories:
         slug = cat_payload.get("slug", "")
         if slug not in cat_rows:
@@ -165,6 +168,10 @@ async def finalize_taxonomy(
             tweet_id = bm.get("tweet_id")
             if not tweet_id:
                 continue
+            if tweet_id in seen_tweet_ids:
+                duplicates += 1
+                continue
+            seen_tweet_ids.add(tweet_id)
             session.add(
                 BookmarkClassification(
                     tweet_id=tweet_id,
@@ -180,6 +187,11 @@ async def finalize_taxonomy(
                 )
             )
             classification_count += 1
+    if duplicates:
+        logger.warning(
+            "Skipped %d duplicate tweet_id assignments during finalize",
+            duplicates,
+        )
 
     # Apply user moves: each move is a (from_slug, to_slug) pair.
     # Per spec, the user-moved row should be marked is_user_corrected=True
