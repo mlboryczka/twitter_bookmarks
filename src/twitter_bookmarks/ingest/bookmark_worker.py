@@ -263,6 +263,7 @@ async def run_bookmark_pull(full_backfill: bool = False) -> dict[str, int]:
                 break
 
     threads_reconstructed = 0
+    articles_enriched = 0
     if new_bookmark_ids:
         async with XClient() as client:
             for tweet_id in new_bookmark_ids:
@@ -273,6 +274,17 @@ async def run_bookmark_pull(full_backfill: bool = False) -> dict[str, int]:
                 except Exception:
                     logger.exception("Thread reconstruction failed for %s", tweet_id)
 
+        # Fetch + extract any linked articles for new bookmarks.
+        from twitter_bookmarks.ingest.articles import enrich_tweet
+
+        for tweet_id in new_bookmark_ids:
+            try:
+                async with session_scope() as session:
+                    if await enrich_tweet(session, tweet_id):
+                        articles_enriched += 1
+            except Exception:
+                logger.exception("Article enrichment failed for %s", tweet_id)
+
     async with session_scope() as session:
         stmt = pg_insert(WorkerState).values(
             key=LAST_PULL_KEY,
@@ -282,6 +294,7 @@ async def run_bookmark_pull(full_backfill: bool = False) -> dict[str, int]:
                 "new_tweets": new_tweets,
                 "new_bookmarks": new_bookmarks,
                 "threads_reconstructed": threads_reconstructed,
+                "articles_enriched": articles_enriched,
             },
         )
         stmt = stmt.on_conflict_do_update(
@@ -295,6 +308,7 @@ async def run_bookmark_pull(full_backfill: bool = False) -> dict[str, int]:
         "new_tweets": new_tweets,
         "new_bookmarks": new_bookmarks,
         "threads_reconstructed": threads_reconstructed,
+        "articles_enriched": articles_enriched,
     }
 
 

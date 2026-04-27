@@ -218,6 +218,7 @@ def _build_user_message(
     feedback_examples: list[FeedbackExample],
     bookmark_text: str,
     author_username: str,
+    article_text: str | None = None,
 ) -> str:
     allowed = {c.slug for c in taxonomy}
     parts = [
@@ -243,6 +244,11 @@ def _build_user_message(
             f"text: {bookmark_text}",
         ]
     )
+    if article_text:
+        article_snippet = article_text.strip()
+        if len(article_snippet) > 1500:
+            article_snippet = article_snippet[:1500].rstrip() + "…"
+        parts.append(f"linked_article: {article_snippet}")
     return "\n".join(parts)
 
 
@@ -286,12 +292,13 @@ async def classify_bookmark(
     by_slug = {c.slug: c for c in categories}
     allowed_slug_list = ", ".join(by_slug.keys())
 
-    # Pull bookmark text (thread or leaf) and the author's username.
+    # Pull bookmark text (thread or leaf), article body, and author.
     stmt = (
         select(
             Author.username,
             Tweet.text,
             BookmarkThread.full_thread_text,
+            Tweet.article_text,
         )
         .join(Tweet, Tweet.tweet_id == Bookmark.tweet_id)
         .join(Author, Author.author_id == Tweet.author_id)
@@ -303,7 +310,7 @@ async def classify_bookmark(
     row = (await session.execute(stmt)).first()
     if row is None:
         raise RuntimeError(f"Bookmark {tweet_id} not found")
-    username, leaf_text, thread_text = row
+    username, leaf_text, thread_text, article_text = row
     text = thread_text or leaf_text or ""
 
     feedback_examples = await get_recent_few_shots(session)
@@ -319,6 +326,7 @@ async def classify_bookmark(
         feedback_examples=feedback_examples,
         bookmark_text=text,
         author_username=username or "unknown",
+        article_text=article_text,
     )
 
     client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)

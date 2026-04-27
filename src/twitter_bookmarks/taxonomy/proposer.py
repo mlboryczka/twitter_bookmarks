@@ -172,8 +172,8 @@ class TaxonomyProposalPayload(BaseModel):
 
 
 def _sample_bookmarks(
-    rows: list[tuple[str, str, str, str]],
-) -> list[tuple[str, str, str, str]]:
+    rows: list[tuple[str, str, str, str | None, str]],
+) -> list[tuple[str, str, str, str | None, str]]:
     """Down-sample chronologically ordered rows to MAX_CORPUS_SIZE."""
     if len(rows) <= MAX_CORPUS_SIZE:
         return list(rows)
@@ -181,13 +181,16 @@ def _sample_bookmarks(
     return rows[::step][:MAX_CORPUS_SIZE]
 
 
-async def _load_corpus(session: AsyncSession) -> list[tuple[str, str, str, str]]:
-    """Return (tweet_id, username, text, created_at) for every bookmark."""
+async def _load_corpus(
+    session: AsyncSession,
+) -> list[tuple[str, str, str, str | None, str]]:
+    """Return (tweet_id, username, text, article_text, created_at) per bookmark."""
     stmt = (
         select(
             Bookmark.tweet_id,
             Author.username,
             func.coalesce(BookmarkThread.full_thread_text, Tweet.text),
+            Tweet.article_text,
             Tweet.created_at,
         )
         .join(Tweet, Tweet.tweet_id == Bookmark.tweet_id)
@@ -199,18 +202,24 @@ async def _load_corpus(session: AsyncSession) -> list[tuple[str, str, str, str]]
     )
     result = await session.execute(stmt)
     return [
-        (tid, uname, text or "", ca.isoformat() if ca else "")
-        for tid, uname, text, ca in result.all()
+        (tid, uname, text or "", article, ca.isoformat() if ca else "")
+        for tid, uname, text, article, ca in result.all()
     ]
 
 
-def _format_corpus(rows: list[tuple[str, str, str, str]]) -> str:
+def _format_corpus(rows: list[tuple[str, str, str, str | None, str]]) -> str:
     parts = []
-    for tweet_id, username, text, _ in rows:
+    for tweet_id, username, text, article, _ in rows:
         snippet = text.strip()
         if len(snippet) > 1200:
             snippet = snippet[:1200].rstrip() + "…"
-        parts.append(f"---\nid: {tweet_id}\nauthor: @{username}\ntext: {snippet}")
+        block = f"---\nid: {tweet_id}\nauthor: @{username}\ntext: {snippet}"
+        if article:
+            article_snippet = article.strip()
+            if len(article_snippet) > 1500:
+                article_snippet = article_snippet[:1500].rstrip() + "…"
+            block += f"\nlinked_article: {article_snippet}"
+        parts.append(block)
     return "\n\n".join(parts)
 
 

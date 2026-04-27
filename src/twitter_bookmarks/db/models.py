@@ -57,6 +57,9 @@ class Tweet(Base):
     in_reply_to_user_id: Mapped[str | None] = mapped_column(Text)
     referenced_tweets: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
     raw_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # Cleaned body of any URL the tweet links to, populated by
+    # `ingest.articles.enrich_tweet`. Null until enrichment runs.
+    article_text: Mapped[str | None] = mapped_column(Text)
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
