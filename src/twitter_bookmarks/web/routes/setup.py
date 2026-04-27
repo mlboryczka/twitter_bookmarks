@@ -1,10 +1,11 @@
 """Setup wizard routes.
 
 The wizard advances `setup_phase` from `not_started` → `fetching_bookmarks`
-→ `awaiting_taxonomy_review` → `classifying_backfill` →
-`awaiting_classification_review` → `complete`. The root `/` route
-(registered in app.py) redirects to whichever screen matches the current
-phase.
+→ `awaiting_taxonomy_review` → `complete`. Sonnet's proposal both proposes
+the taxonomy and classifies every shown bookmark in one call, so the user
+reviews the full grouping (with per-bookmark move/feedback) on the
+proposal page before locking. There's no separate Haiku run before
+finalize.
 """
 
 from __future__ import annotations
@@ -12,18 +13,17 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import desc, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from twitter_bookmarks.classify.classifier import run_setup_classify_job
 from twitter_bookmarks.db.models import (
     Author,
     Bookmark,
     BookmarkClassification,
-    Category,
+    BookmarkThread,
     Tweet,
     WorkerState,
 )
@@ -40,9 +40,13 @@ from twitter_bookmarks.setup_state import (
 from twitter_bookmarks.taxonomy.finalizer import (
     CategoryEdit,
     finalize_taxonomy,
-    list_categories,
 )
-from twitter_bookmarks.taxonomy.proposer import get_active_draft, propose_taxonomy
+from twitter_bookmarks.taxonomy.proposer import (
+    TaxonomyProposalPayload,
+    apply_move,
+    get_active_draft,
+    propose_taxonomy,
+)
 from twitter_bookmarks.web.auth import AuthedUser
 
 logger = logging.getLogger(__name__)
@@ -58,8 +62,8 @@ def _phase_to_path(phase: SetupPhase) -> str:
         "not_started": "/setup/welcome",
         "fetching_bookmarks": "/setup/fetching",
         "awaiting_taxonomy_review": "/setup/proposal",
-        "classifying_backfill": "/setup/classifying",
-        "awaiting_classification_review": "/setup/review",
+        "classifying_backfill": "/setup/proposal",
+        "awaiting_classification_review": "/setup/proposal",
         "complete": "/",
     }[phase]
 
@@ -92,21 +96,9 @@ async def _safe_run_backfill() -> None:
         logger.exception("Setup backfill background task failed")
 
 
-async def _safe_run_classify() -> None:
-    try:
-        await run_setup_classify_job()
-    except Exception:
-        logger.exception("Setup classification background task failed")
-
-
 @router.get("/setup/fetching", response_class=HTMLResponse)
 async def fetching(request: Request, _user: AuthedUser) -> HTMLResponse:
     return templates.TemplateResponse(request, "setup/fetching.html", {})
-
-
-@router.get("/setup/classifying", response_class=HTMLResponse)
-async def classifying(request: Request, _user: AuthedUser) -> HTMLResponse:
-    return templates.TemplateResponse(request, "setup/classifying.html", {})
 
 
 @router.get("/setup/status", response_class=HTMLResponse)
@@ -135,7 +127,6 @@ async def status(
         if phase
         in (
             "awaiting_taxonomy_review",
-            "awaiting_classification_review",
             "complete",
         )
         else ""
@@ -150,6 +141,12 @@ async def status(
             f"{v.get('threads_reconstructed', 0)} threads reconstructed</p>"
         )
 
+    # Use HTMX out-of-band redirect via header — the inner-div approach we
+    # had before missed the data-redirect attribute on the swap target.
+    headers = {}
+    if phase in ("awaiting_taxonomy_review", "complete"):
+        headers["HX-Redirect"] = target
+
     html = (
         f"<div{redirect_attr}>"
         f"<p><strong>Phase:</strong> {phase}</p>"
@@ -157,7 +154,80 @@ async def status(
         f"{last_pull_summary}"
         "</div>"
     )
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers=headers)
+
+
+async def _proposal_view_data(
+    session: AsyncSession,
+    payload_dict: dict[str, Any],
+) -> dict[str, Any]:
+    """Hydrate a proposal_json dict with author + tweet text for rendering."""
+    cats = payload_dict.get("categories") or []
+    all_tweet_ids = [
+        bm.get("tweet_id")
+        for cat in cats
+        for bm in cat.get("bookmarks", [])
+        if bm.get("tweet_id")
+    ]
+    text_lookup: dict[str, dict[str, Any]] = {}
+    if all_tweet_ids:
+        rows = (
+            await session.execute(
+                select(
+                    Tweet.tweet_id,
+                    Tweet.text,
+                    Tweet.created_at,
+                    Author.username,
+                    BookmarkThread.full_thread_text,
+                )
+                .join(Author, Author.author_id == Tweet.author_id)
+                .outerjoin(
+                    BookmarkThread,
+                    BookmarkThread.bookmark_tweet_id == Tweet.tweet_id,
+                )
+                .where(Tweet.tweet_id.in_(all_tweet_ids))
+            )
+        ).all()
+        for tid, text, created_at, username, thread_text in rows:
+            full = thread_text or text or ""
+            excerpt = full.strip()
+            if len(excerpt) > 280:
+                excerpt = excerpt[:280].rstrip() + "…"
+            text_lookup[tid] = {
+                "text_excerpt": excerpt,
+                "created_at": created_at,
+                "author_username": username,
+            }
+
+    rendered_cats = []
+    for cat in cats:
+        bookmarks = []
+        for bm in cat.get("bookmarks", []):
+            tid = bm.get("tweet_id")
+            meta = text_lookup.get(tid, {})
+            bookmarks.append(
+                {
+                    "tweet_id": tid,
+                    "gist": bm.get("gist") or "",
+                    "text_excerpt": meta.get("text_excerpt", ""),
+                    "created_at": meta.get("created_at"),
+                    "author_username": meta.get("author_username", "unknown"),
+                }
+            )
+        rendered_cats.append(
+            {
+                "slug": cat.get("slug", ""),
+                "name": cat.get("name", ""),
+                "description": cat.get("description", ""),
+                "rationale": cat.get("rationale", ""),
+                "bookmarks": bookmarks,
+            }
+        )
+    return {
+        "categories": rendered_cats,
+        "overall_rationale": payload_dict.get("overall_rationale", ""),
+        "total_bookmarks": sum(len(c["bookmarks"]) for c in rendered_cats),
+    }
 
 
 @router.get("/setup/proposal", response_class=HTMLResponse)
@@ -167,72 +237,28 @@ async def proposal(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> HTMLResponse:
     phase = await get_setup_phase(session)
-    if phase != "awaiting_taxonomy_review":
+    if phase == "complete":
+        return RedirectResponse("/", status_code=303)
+    if phase in ("not_started", "fetching_bookmarks"):
         return RedirectResponse(_phase_to_path(phase), status_code=303)
 
     draft = await get_active_draft(session)
     if draft is None:
-        # Generate one inline.
         await propose_taxonomy(session)
         await session.commit()
         draft = await get_active_draft(session)
 
-    proposal_data = (draft.proposal_json if draft else {}) or {}
-    cats = []
-    for cat in proposal_data.get("categories", []):
-        examples = await _fetch_examples(session, cat.get("example_tweet_ids", []))
-        cats.append(
-            {
-                "slug": cat.get("slug", ""),
-                "name": cat.get("name", ""),
-                "description": cat.get("description", ""),
-                "rationale": cat.get("rationale", ""),
-                "examples": examples,
-            }
-        )
+    proposal_dict = (draft.proposal_json if draft else {}) or {}
+    view = await _proposal_view_data(session, proposal_dict)
 
     return templates.TemplateResponse(
         request,
         "setup/proposal.html",
-        {
-            "proposal": {
-                "categories": cats,
-                "overall_rationale": proposal_data.get("overall_rationale", ""),
-            }
-        },
+        {"proposal": view},
     )
 
 
-async def _fetch_examples(
-    session: AsyncSession, tweet_ids: list[str]
-) -> list[dict[str, Any]]:
-    if not tweet_ids:
-        return []
-    rows = (
-        await session.execute(
-            select(Tweet.tweet_id, Tweet.text, Author.username)
-            .join(Author, Author.author_id == Tweet.author_id)
-            .where(Tweet.tweet_id.in_(tweet_ids))
-        )
-    ).all()
-    out = []
-    for tid, text, username in rows:
-        snippet = text[:200] + "…" if text and len(text) > 200 else text
-        out.append({"tweet_id": tid, "text": snippet, "username": username})
-    return out
-
-
-@router.get("/setup/proposal/blank-row", response_class=HTMLResponse)
-async def proposal_blank_row(
-    request: Request,
-    _user: AuthedUser,
-) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request, "setup/_category_row.html", {"cat": None}
-    )
-
-
-@router.post("/setup/proposal/regenerate", response_class=HTMLResponse)
+@router.post("/setup/proposal/regenerate")
 async def proposal_regenerate(
     _user: AuthedUser,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -241,10 +267,42 @@ async def proposal_regenerate(
     return RedirectResponse("/setup/proposal", status_code=303)
 
 
+@router.post("/setup/proposal/move", response_class=HTMLResponse)
+async def proposal_move(
+    request: Request,
+    _user: AuthedUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tweet_id: Annotated[str, Form()],
+    to_slug: Annotated[str, Form()],
+    feedback: Annotated[str, Form()] = "",
+) -> HTMLResponse:
+    """Move a bookmark to a different category. Updates proposal_json in DB."""
+    if not to_slug.strip():
+        return HTMLResponse("", status_code=204)
+
+    draft = await get_active_draft(session)
+    if draft is None:
+        return HTMLResponse("No active draft", status_code=400)
+
+    payload = TaxonomyProposalPayload.model_validate(draft.proposal_json or {})
+    try:
+        result = apply_move(payload, tweet_id, to_slug, feedback or None)
+    except ValueError as exc:
+        return HTMLResponse(f"Invalid move: {exc}", status_code=400)
+    if result is None:
+        return HTMLResponse("", status_code=204)
+
+    draft.proposal_json = payload.model_dump()
+
+    # HTMX: return empty body + tell the client to refresh the page so the
+    # bookmark renders under its new category. Simpler than re-rendering
+    # individual sections.
+    return HTMLResponse("", headers={"HX-Refresh": "true"})
+
+
 @router.post("/setup/proposal/finalize")
 async def proposal_finalize(
     request: Request,
-    background: BackgroundTasks,
     _user: AuthedUser,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> RedirectResponse:
@@ -254,6 +312,8 @@ async def proposal_finalize(
     descriptions = form.getlist("description[]")
     edits: list[CategoryEdit] = []
     for i, name in enumerate(names):
+        if not name.strip():
+            continue
         edits.append(
             CategoryEdit(
                 slug=slugs[i] if i < len(slugs) else "",
@@ -262,73 +322,25 @@ async def proposal_finalize(
                 sort_order=i,
             )
         )
-    await finalize_taxonomy(session, edits)
-    background.add_task(_safe_run_classify)
-    return RedirectResponse("/setup/classifying", status_code=303)
+
+    draft = await get_active_draft(session)
+    if draft is None:
+        return RedirectResponse("/setup/proposal", status_code=303)
+
+    await finalize_taxonomy(session, draft, edits)
+    return RedirectResponse("/", status_code=303)
+
+
+# Legacy redirect: anything still pointing at /setup/review or
+# /setup/classifying just goes back to /setup/proposal under the new flow.
+@router.get("/setup/classifying", response_class=HTMLResponse)
+async def classifying(_user: AuthedUser) -> RedirectResponse:
+    return RedirectResponse("/setup/proposal", status_code=303)
 
 
 @router.get("/setup/review", response_class=HTMLResponse)
-async def review(
-    request: Request,
-    _user: AuthedUser,
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> HTMLResponse:
-    phase = await get_setup_phase(session)
-    if phase != "awaiting_classification_review":
-        return RedirectResponse(_phase_to_path(phase), status_code=303)
-
-    cats = await list_categories(session)
-    grouped: list[dict[str, Any]] = []
-    for cat in cats:
-        rows = (
-            await session.execute(
-                select(
-                    BookmarkClassification.tweet_id,
-                    BookmarkClassification.gist,
-                    BookmarkClassification.sub_tags,
-                    BookmarkClassification.is_user_corrected,
-                    Tweet.text,
-                    Tweet.created_at,
-                    Author.username,
-                )
-                .join(Tweet, Tweet.tweet_id == BookmarkClassification.tweet_id)
-                .join(Author, Author.author_id == Tweet.author_id)
-                .where(BookmarkClassification.category_id == cat.id)
-                .order_by(desc(Tweet.created_at))
-            )
-        ).all()
-        bookmarks = [
-            {
-                "tweet_id": tid,
-                "gist": gist,
-                "sub_tags": sub_tags or [],
-                "is_user_corrected": corrected,
-                "text_excerpt": (text[:200] + "…") if text and len(text) > 200 else text,
-                "created_at": created_at,
-                "author_username": username,
-                "category_slug": cat.slug,
-                "category_name": cat.name,
-            }
-            for tid, gist, sub_tags, corrected, text, created_at, username in rows
-        ]
-        grouped.append(
-            {
-                "name": cat.name,
-                "description": cat.description,
-                "bookmarks": bookmarks,
-            }
-        )
-
-    total = sum(len(c["bookmarks"]) for c in grouped)
-    return templates.TemplateResponse(
-        request,
-        "setup/review.html",
-        {
-            "categories": grouped,
-            "total": total,
-            "all_categories": cats,
-        },
-    )
+async def review(_user: AuthedUser) -> RedirectResponse:
+    return RedirectResponse("/setup/proposal", status_code=303)
 
 
 @router.post("/setup/complete")

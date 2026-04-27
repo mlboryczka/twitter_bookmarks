@@ -1,8 +1,10 @@
-"""Claude Sonnet proposes a taxonomy from the user's bookmarked corpus.
+"""Claude Sonnet proposes a taxonomy AND classifies every bookmark in one call.
 
 The proposal is generated via tool use so we get a structured response back.
-We sample large corpora to keep the prompt manageable while still capturing
-topical drift over time (every-Nth chronological sampling).
+For each proposed category, Sonnet returns the full list of bookmarks it
+believes belong there along with a 1-2 sentence gist per bookmark. The
+user reviews the result on /setup/proposal and can move bookmarks between
+categories before finalizing — each move becomes classifier_feedback.
 """
 
 from __future__ import annotations
@@ -29,7 +31,9 @@ from twitter_bookmarks.x_api.client import log_api_call
 
 logger = logging.getLogger(__name__)
 
-# Cap how many bookmarks we send to Sonnet. Above this, we down-sample.
+# Cap how many bookmarks we send to Sonnet. Above this, we down-sample —
+# but if we down-sample, we can only classify the sampled subset (others
+# are deferred to Haiku).
 MAX_CORPUS_SIZE = 200
 # Anthropic pricing as of April 2026 — used to log the cost row. Confirm
 # at https://www.anthropic.com/api before relying on for billing.
@@ -39,14 +43,15 @@ SONNET_OUTPUT_PER_MTOK = 15.00
 PROPOSE_TOOL = {
     "name": "propose_taxonomy",
     "description": (
-        "Record the proposed taxonomy of categories for the user's bookmark "
-        "corpus. Always return between 6 and 12 categories. Categories must "
-        "be MECE (mutually exclusive, collectively exhaustive) over the "
-        "shown bookmarks, substantive (each category should plausibly fit "
-        "at least 3-5 bookmarks), and reusable concepts (e.g. 'AI / ML', "
-        "not 'AI in 2026'). Avoid sentiment- or quality-based categories "
-        "like 'interesting' or 'must-read'. A single catch-all 'misc' is "
-        "permitted only when genuinely needed."
+        "Record the proposed taxonomy AND assign EVERY shown bookmark to "
+        "exactly one category. Always return between 6 and 12 categories. "
+        "Categories must be MECE (mutually exclusive, collectively "
+        "exhaustive) over the shown bookmarks, substantive (each plausibly "
+        "fits 3+ bookmarks), and reusable concepts (e.g. 'AI / ML', not "
+        "'AI in 2026'). Avoid sentiment- or quality-based categories like "
+        "'interesting' or 'must-read'. A single catch-all 'misc' is "
+        "permitted only when genuinely needed. EVERY bookmark id shown to "
+        "you must appear in exactly one category's bookmarks array."
     ),
     "input_schema": {
         "type": "object",
@@ -80,19 +85,39 @@ PROPOSE_TOOL = {
                         "rationale": {
                             "type": "string",
                             "description": (
-                                "Why this category exists *for this user*: "
-                                "what patterns in their bookmarks led you to "
-                                "propose it."
+                                "Why this category exists for this user — "
+                                "what patterns in their bookmarks led you "
+                                "to propose it."
                             ),
                         },
-                        "example_tweet_ids": {
+                        "bookmarks": {
                             "type": "array",
                             "minItems": 1,
-                            "maxItems": 5,
-                            "items": {"type": "string"},
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "tweet_id": {
+                                        "type": "string",
+                                        "description": (
+                                            "An id from the BOOKMARKS list "
+                                            "shown to you. Must be a real id."
+                                        ),
+                                    },
+                                    "gist": {
+                                        "type": "string",
+                                        "description": (
+                                            "1-2 sentence summary of what "
+                                            "this bookmark says. Concrete, "
+                                            "specific, no filler."
+                                        ),
+                                    },
+                                },
+                                "required": ["tweet_id", "gist"],
+                            },
                             "description": (
-                                "3-5 tweet IDs from the shown corpus that "
-                                "would clearly belong in this category."
+                                "Every bookmark you assign to this category. "
+                                "Each bookmark id must appear in exactly one "
+                                "category across the whole response."
                             ),
                         },
                     },
@@ -101,16 +126,16 @@ PROPOSE_TOOL = {
                         "name",
                         "description",
                         "rationale",
-                        "example_tweet_ids",
+                        "bookmarks",
                     ],
                 },
             },
             "overall_rationale": {
                 "type": "string",
                 "description": (
-                    "A short paragraph framing the taxonomy as a whole — "
-                    "what's the user's broad area of interest, how do the "
-                    "categories relate to each other."
+                    "Short paragraph framing the taxonomy as a whole — the "
+                    "user's broad area of interest, how the categories "
+                    "relate to each other."
                 ),
             },
         },
@@ -119,14 +144,21 @@ PROPOSE_TOOL = {
 }
 
 
+class ProposedBookmark(BaseModel):
+    """One bookmark assigned to a category in the proposal."""
+
+    tweet_id: str
+    gist: str
+
+
 class ProposedCategory(BaseModel):
-    """One proposed category in a taxonomy."""
+    """One proposed category with its assigned bookmarks."""
 
     slug: str
     name: str
     description: str
     rationale: str
-    example_tweet_ids: list[str] = Field(default_factory=list)
+    bookmarks: list[ProposedBookmark] = Field(default_factory=list)
 
 
 class TaxonomyProposalPayload(BaseModel):
@@ -134,18 +166,15 @@ class TaxonomyProposalPayload(BaseModel):
 
     categories: list[ProposedCategory]
     overall_rationale: str
+    # User edits applied on top of the original Sonnet output. Each move
+    # becomes a classifier_feedback row at finalize time.
+    moves: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def _sample_bookmarks(
     rows: list[tuple[str, str, str, str]],
 ) -> list[tuple[str, str, str, str]]:
-    """Down-sample chronologically ordered rows to MAX_CORPUS_SIZE.
-
-    Each row is (tweet_id, author_username, text, created_at_iso). Rows are
-    expected to already be sorted by created_at; we keep every k-th entry
-    where k = ceil(len(rows) / MAX_CORPUS_SIZE) so we still see drift over
-    time.
-    """
+    """Down-sample chronologically ordered rows to MAX_CORPUS_SIZE."""
     if len(rows) <= MAX_CORPUS_SIZE:
         return list(rows)
     step = (len(rows) + MAX_CORPUS_SIZE - 1) // MAX_CORPUS_SIZE
@@ -153,11 +182,7 @@ def _sample_bookmarks(
 
 
 async def _load_corpus(session: AsyncSession) -> list[tuple[str, str, str, str]]:
-    """Return (tweet_id, username, text, created_at) for every bookmark.
-
-    Uses thread text when available, leaf tweet text otherwise. Sorted
-    chronologically (oldest first) so down-sampling captures drift.
-    """
+    """Return (tweet_id, username, text, created_at) for every bookmark."""
     stmt = (
         select(
             Bookmark.tweet_id,
@@ -182,7 +207,6 @@ async def _load_corpus(session: AsyncSession) -> list[tuple[str, str, str, str]]
 def _format_corpus(rows: list[tuple[str, str, str, str]]) -> str:
     parts = []
     for tweet_id, username, text, _ in rows:
-        # Trim very long thread texts to keep tokens bounded.
         snippet = text.strip()
         if len(snippet) > 1200:
             snippet = snippet[:1200].rstrip() + "…"
@@ -193,19 +217,23 @@ def _format_corpus(rows: list[tuple[str, str, str, str]]) -> str:
 def _system_prompt() -> str:
     return (
         "You are designing a personal taxonomy of bookmark categories for a "
-        "single user, based on the X (Twitter) bookmarks they've actually "
-        "saved. Your goal is to propose 6-12 categories that carve up THEIR "
-        "interests cleanly, not a generic taxonomy of internet topics.\n\n"
+        "single user, AND classifying every one of their bookmarks into the "
+        "taxonomy. Your taxonomy must carve up THEIR interests cleanly, not "
+        "be a generic taxonomy of internet topics.\n\n"
         "Hard rules:\n"
         "- 6-12 categories total. No more, no fewer.\n"
-        "- Each category must plausibly fit 3 or more of the shown bookmarks.\n"
+        "- Each category must plausibly fit 3+ of the shown bookmarks.\n"
         "- Categories must be MECE: every shown bookmark fits exactly one.\n"
+        "- Every bookmark id from the BOOKMARKS list must appear in "
+        "exactly one category's bookmarks array. Do not skip any.\n"
         "- Avoid sentiment-based or quality-based categories ('interesting', "
         "'must-read', 'thought-provoking').\n"
-        "- Categories should be reusable concepts ('AI / ML' not "
-        "'AI in 2026'; 'Macro & Markets' not 'inflation 2024').\n"
+        "- Categories should be reusable concepts ('AI / ML' not 'AI in "
+        "2026'; 'Macro & Markets' not 'inflation 2024').\n"
         "- A single catch-all 'misc' is allowed only if genuinely needed.\n"
-        "- Slugs are kebab-case and become permanent identifiers.\n\n"
+        "- Slugs are kebab-case and become permanent identifiers.\n"
+        "- For each bookmark, write a 1-2 sentence gist that's concrete and "
+        "specific — no filler, no 'this tweet discusses…'\n\n"
         "Use the propose_taxonomy tool to record your final answer. Do not "
         "produce any prose response — only call the tool."
     )
@@ -225,12 +253,12 @@ def _estimate_cost(usage: dict[str, int] | Any) -> float:
 
 
 async def propose_taxonomy(session: AsyncSession) -> TaxonomyProposalPayload:
-    """Generate a fresh taxonomy proposal and persist it as a draft.
+    """Generate a taxonomy + classify every shown bookmark in one Sonnet call.
 
     The draft is stored in `taxonomy_proposals` and returned. The caller
-    (the setup wizard) presents it to the user for editing; on finalize,
-    `taxonomy.finalizer.finalize_taxonomy` writes the user-edited list to
-    the `categories` table and marks the proposal `finalized`.
+    (the setup wizard) presents it to the user for review on /setup/proposal;
+    on finalize, `taxonomy.finalizer.finalize_taxonomy` writes the categories
+    + bookmark_classifications + classifier_feedback rows.
     """
     settings = get_settings()
     rows = await _load_corpus(session)
@@ -238,18 +266,23 @@ async def propose_taxonomy(session: AsyncSession) -> TaxonomyProposalPayload:
         raise RuntimeError("No bookmarks found; cannot propose a taxonomy")
 
     sample = _sample_bookmarks(rows)
+    sample_ids = {r[0] for r in sample}
     corpus = _format_corpus(sample)
     user_message = (
-        f"Here are {len(sample)} of my {len(rows)} bookmarks "
-        "(sampled chronologically). Propose a taxonomy I can use to "
-        "categorize all of them.\n\n"
+        f"Here are {len(sample)} of my {len(rows)} bookmarks. Propose a "
+        "taxonomy AND assign every shown bookmark to exactly one category. "
+        "Use the tweet ids exactly as shown.\n\n"
         f"BOOKMARKS:\n{corpus}"
     )
+
+    # Output cap: 99 bookmarks * ~150 tokens (gist + tweet_id) ~= 15k.
+    # Plus category metadata ~= 2k. Cap at 16k tokens output to be safe.
+    max_tokens = max(4096, len(sample) * 200 + 2000)
 
     client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     response = await client.messages.create(
         model=settings.SONNET_MODEL,
-        max_tokens=4096,
+        max_tokens=min(max_tokens, 16000),
         system=_system_prompt(),
         tools=[PROPOSE_TOOL],
         tool_choice={"type": "tool", "name": "propose_taxonomy"},
@@ -284,8 +317,48 @@ async def propose_taxonomy(session: AsyncSession) -> TaxonomyProposalPayload:
 
     payload = TaxonomyProposalPayload.model_validate(tool_input)
 
-    # Mark any previous draft as superseded so /setup/proposal always sees
-    # exactly one active draft.
+    # Sanity check: warn (don't fail) if Sonnet skipped or invented bookmarks.
+    assigned: dict[str, str] = {}
+    for cat in payload.categories:
+        for bm in cat.bookmarks:
+            assigned[bm.tweet_id] = cat.slug
+    missing = sample_ids - set(assigned.keys())
+    extra = set(assigned.keys()) - sample_ids
+    if missing:
+        logger.warning(
+            "Sonnet skipped %d bookmarks; will land them in 'misc' on finalize: %s",
+            len(missing),
+            list(missing)[:5],
+        )
+    if extra:
+        logger.warning(
+            "Sonnet returned %d unknown ids; ignoring: %s",
+            len(extra),
+            list(extra)[:5],
+        )
+
+    # Backfill missing bookmarks into a 'misc' category if needed.
+    if missing:
+        misc_cat = next(
+            (c for c in payload.categories if c.slug == "misc"), None
+        )
+        if misc_cat is None:
+            misc_cat = ProposedCategory(
+                slug="misc",
+                name="Misc",
+                description=(
+                    "Bookmarks that didn't fit cleanly into the other "
+                    "categories — review and reassign or split."
+                ),
+                rationale="Catch-all for unassigned bookmarks.",
+                bookmarks=[],
+            )
+            payload.categories.append(misc_cat)
+        for tid in missing:
+            misc_cat.bookmarks.append(
+                ProposedBookmark(tweet_id=tid, gist="(no gist generated)")
+            )
+
     await _supersede_drafts(session)
     session.add(
         TaxonomyProposal(
@@ -295,8 +368,10 @@ async def propose_taxonomy(session: AsyncSession) -> TaxonomyProposalPayload:
     )
 
     logger.info(
-        "Proposed taxonomy with %d categories (corpus_total=%d, sampled=%d)",
+        "Proposed taxonomy with %d categories, %d bookmarks classified "
+        "(corpus_total=%d, sampled=%d)",
         len(payload.categories),
+        sum(len(c.bookmarks) for c in payload.categories),
         len(rows),
         len(sample),
     )
@@ -322,3 +397,47 @@ async def get_active_draft(session: AsyncSession) -> TaxonomyProposal | None:
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+def apply_move(
+    payload: TaxonomyProposalPayload,
+    tweet_id: str,
+    to_slug: str,
+    feedback: str | None = None,
+) -> tuple[str, str] | None:
+    """Move a bookmark to a new category in the in-memory payload.
+
+    Returns (from_slug, to_slug) on success (or None if tweet_id not found
+    or already in the target category). Records the move in payload.moves
+    so finalize can produce classifier_feedback rows.
+    """
+    target = next((c for c in payload.categories if c.slug == to_slug), None)
+    if target is None:
+        raise ValueError(f"Unknown target category slug: {to_slug}")
+
+    moved_bookmark: ProposedBookmark | None = None
+    from_slug: str | None = None
+    for cat in payload.categories:
+        for i, bm in enumerate(cat.bookmarks):
+            if bm.tweet_id == tweet_id:
+                if cat.slug == to_slug:
+                    return None
+                from_slug = cat.slug
+                moved_bookmark = cat.bookmarks.pop(i)
+                break
+        if moved_bookmark is not None:
+            break
+
+    if moved_bookmark is None or from_slug is None:
+        return None
+
+    target.bookmarks.append(moved_bookmark)
+    payload.moves.append(
+        {
+            "tweet_id": tweet_id,
+            "from_slug": from_slug,
+            "to_slug": to_slug,
+            "feedback": feedback or "",
+        }
+    )
+    return (from_slug, to_slug)

@@ -1,30 +1,88 @@
 {% extends "base.html" %}
 {% block title %}Review proposed taxonomy — twitter_bookmarks{% endblock %}
 {% block content %}
+<style>
+  .bm-card { padding: 0.75em; margin: 0.5em 0; border: 1px solid var(--pico-muted-border-color); border-radius: 0.4em; }
+  .bm-card .meta { font-size: 0.85em; }
+  .bm-card .text { font-size: 0.9em; margin: 0.4em 0; }
+  .bm-card .controls { display: flex; gap: 0.5em; align-items: center; flex-wrap: wrap; margin-top: 0.4em; font-size: 0.85em; }
+  .bm-card .controls form { margin: 0; }
+  .bm-card .controls select, .bm-card .controls input[type=text] { padding: 0.2em 0.4em; font-size: 0.85em; height: auto; margin: 0; }
+  .bm-card .controls button { padding: 0.2em 0.6em; font-size: 0.85em; height: auto; margin: 0; }
+  details.cat { border: 1px solid var(--pico-muted-border-color); border-radius: 0.5em; padding: 0.75em 1em; margin-bottom: 0.75em; background: var(--pico-card-background-color); }
+  details.cat[open] { padding-bottom: 1em; }
+  details.cat > summary { cursor: pointer; font-weight: 600; font-size: 1.1em; }
+  .cat-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em; margin: 0.5em 0; }
+  .cat-meta input, .cat-meta textarea { font-size: 0.95em; }
+</style>
+
 <h1>Proposed taxonomy</h1>
 <p class="meta">{{ proposal.overall_rationale }}</p>
+<p class="meta"><strong>{{ proposal.total_bookmarks }}</strong> bookmarks across <strong>{{ proposal.categories|length }}</strong> categories. Move any bookmark that's in the wrong place. Add a one-line "why" if you want to teach the classifier.</p>
 
 <form action="/setup/proposal/finalize" method="post">
   <div id="categories">
     {% for cat in proposal.categories %}
-      {% include "setup/_category_row.html" %}
+      <details class="cat" {% if loop.index <= 3 %}open{% endif %}>
+        <summary>{{ cat.name }} <span class="meta">({{ cat.bookmarks|length }})</span></summary>
+
+        <input type="hidden" name="slug[]" value="{{ cat.slug }}">
+        <div class="cat-meta">
+          <label>
+            <small>Name</small>
+            <input type="text" name="name[]" value="{{ cat.name }}" required>
+          </label>
+          <label>
+            <small>Description</small>
+            <textarea name="description[]" rows="2" required>{{ cat.description }}</textarea>
+          </label>
+        </div>
+        {% if cat.rationale %}
+          <p class="meta"><em>Why this category:</em> {{ cat.rationale }}</p>
+        {% endif %}
+
+        <div class="bookmarks">
+          {% for bm in cat.bookmarks %}
+            <div class="bm-card">
+              <div>
+                <strong>@{{ bm.author_username }}</strong>
+                {% if bm.created_at %}<span class="meta"> · {{ bm.created_at.strftime('%Y-%m-%d') }}</span>{% endif %}
+                <a class="meta" href="https://x.com/i/web/status/{{ bm.tweet_id }}" target="_blank" rel="noopener">view on x →</a>
+              </div>
+              {% if bm.gist %}<div class="text"><strong>Gist:</strong> {{ bm.gist }}</div>{% endif %}
+              <div class="text meta">{{ bm.text_excerpt }}</div>
+              <div class="controls">
+                <input type="hidden" name="tweet_id" value="{{ bm.tweet_id }}" form="">
+                <select name="to_slug" form="" aria-label="move to category">
+                  <option value="">move to…</option>
+                  {% for other in proposal.categories %}
+                    {% if other.slug != cat.slug %}
+                      <option value="{{ other.slug }}">{{ other.name }}</option>
+                    {% endif %}
+                  {% endfor %}
+                </select>
+                <input type="text" name="feedback" placeholder="why? (optional)" maxlength="200" form="">
+                <button type="button"
+                        class="secondary"
+                        hx-post="/setup/proposal/move"
+                        hx-include="closest .controls">
+                  move
+                </button>
+              </div>
+            </div>
+          {% else %}
+            <p class="meta"><em>No bookmarks in this category.</em></p>
+          {% endfor %}
+        </div>
+      </details>
     {% endfor %}
   </div>
 
-  <div style="margin-top: 1em;">
+  <div style="margin-top: 1em; display: flex; gap: 0.5em;">
     <button type="button"
-            hx-get="/setup/proposal/blank-row"
-            hx-target="#categories"
-            hx-swap="beforeend"
-            class="secondary">
-      + Add category
-    </button>
-    <button type="submit"
             hx-post="/setup/proposal/regenerate"
-            hx-target="body"
-            hx-confirm="Regenerate the proposal? Your edits will be lost."
-            class="contrast"
-            formnovalidate>
+            hx-confirm="Regenerate the proposal? Your edits and moves will be lost."
+            class="contrast">
       Regenerate proposal
     </button>
     <button type="submit">Finalize taxonomy</button>
