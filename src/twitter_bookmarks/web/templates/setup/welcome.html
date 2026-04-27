@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Welcome — twitter_bookmarks{% endblock %}
+{% block content %}
+<h1>Welcome</h1>
+<p>This is the one-time setup wizard for your personal X bookmark digest.</p>
+
+<ol>
+  <li>We'll fetch all your X bookmarks (up to the API's 800-bookmark cap).</li>
+  <li>Claude will read them and propose a personalized taxonomy.</li>
+  <li>You'll edit the proposal — rename, merge, split, delete, or add categories.</li>
+  <li>Once you finalize the taxonomy, every bookmark gets classified.</li>
+  <li>You'll review the classifications and correct any miscategorizations.</li>
+  <li>From then on, you'll get a weekly Monday-morning digest.</li>
+</ol>
+
+<p>This will use a small amount of X API and Anthropic API budget — typically
+under $5 of API spend total for setup.</p>
+
+<form action="/setup/start" method="post">
+  <button type="submit">Begin setup</button>
+</form>
+{% endblock %}

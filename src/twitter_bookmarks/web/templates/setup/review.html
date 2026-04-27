@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Review classifications — twitter_bookmarks{% endblock %}
+{% block content %}
+<h1>Review classifications</h1>
+<p class="meta">{{ total }} bookmarks classified. Use the dropdowns to fix any mistakes —
+each correction becomes a future few-shot example for the classifier.</p>
+
+{% for category in categories %}
+  <details {% if loop.index <= 2 %}open{% endif %}>
+    <summary><strong>{{ category.name }}</strong> ({{ category.bookmarks|length }})</summary>
+    <p class="meta">{{ category.description }}</p>
+    {% for bookmark in category.bookmarks %}
+      <div id="card-{{ bookmark.tweet_id }}">
+        {% include "bookmarks/_card.html" %}
+      </div>
+    {% endfor %}
+  </details>
+{% endfor %}
+
+<form action="/setup/complete" method="post" style="margin-top: 2em;">
+  <button type="submit">Complete setup</button>
+</form>
+{% endblock %}

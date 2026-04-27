@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Fetching bookmarks — twitter_bookmarks{% endblock %}
+{% block content %}
+<h1>Fetching your bookmarks…</h1>
+<p>This can take a few minutes. The X API caps at 800 bookmarks total
+and we paginate at 100 per request, so expect about 8 requests.</p>
+
+<div id="status"
+     hx-get="/setup/status"
+     hx-trigger="every 3s"
+     hx-swap="innerHTML">
+  <p>Starting up…</p>
+</div>
+
+<script>
+  // When the server signals 'redirect', navigate.
+  document.addEventListener('htmx:afterSwap', function(evt) {
+    const redirect = evt.detail.target.dataset.redirect;
+    if (redirect) {
+      window.location.href = redirect;
+    }
+  });
+</script>
+{% endblock %}

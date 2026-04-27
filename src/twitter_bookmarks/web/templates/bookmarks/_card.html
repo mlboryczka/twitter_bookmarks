@@ -1,0 +1,32 @@
+<article class="card">
+  <header>
+    <strong>@{{ bookmark.author_username }}</strong>
+    <span class="meta">· {{ bookmark.created_at.strftime('%Y-%m-%d') if bookmark.created_at else '' }}</span>
+    {% if bookmark.is_user_corrected %}
+      <span class="chip">corrected</span>
+    {% endif %}
+  </header>
+  <p>{{ bookmark.gist }}</p>
+  <p class="meta" style="font-size: 0.85em;">{{ bookmark.text_excerpt }}</p>
+  <div>
+    <span class="chip category">{{ bookmark.category_name }}</span>
+    {% for tag in bookmark.sub_tags %}
+      <span class="chip">{{ tag }}</span>
+    {% endfor %}
+  </div>
+  <footer style="display: flex; gap: 0.5em; align-items: center; margin-top: 0.5em;">
+    <a href="https://x.com/i/web/status/{{ bookmark.tweet_id }}" target="_blank" rel="noopener">View on X</a>
+    <form hx-post="/bookmarks/{{ bookmark.tweet_id }}/recategorize"
+          hx-target="#card-{{ bookmark.tweet_id }}"
+          hx-swap="outerHTML"
+          style="margin: 0;">
+      <select name="category_slug" onchange="this.form.requestSubmit()">
+        {% for cat in all_categories %}
+          <option value="{{ cat.slug }}" {% if cat.slug == bookmark.category_slug %}selected{% endif %}>
+            {{ cat.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </form>
+  </footer>
+</article>

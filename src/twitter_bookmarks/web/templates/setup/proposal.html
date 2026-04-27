@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Review proposed taxonomy — twitter_bookmarks{% endblock %}
+{% block content %}
+<h1>Proposed taxonomy</h1>
+<p class="meta">{{ proposal.overall_rationale }}</p>
+
+<form action="/setup/proposal/finalize" method="post">
+  <div id="categories">
+    {% for cat in proposal.categories %}
+      {% include "setup/_category_row.html" %}
+    {% endfor %}
+  </div>
+
+  <div style="margin-top: 1em;">
+    <button type="button"
+            hx-get="/setup/proposal/blank-row"
+            hx-target="#categories"
+            hx-swap="beforeend"
+            class="secondary">
+      + Add category
+    </button>
+    <button type="submit"
+            hx-post="/setup/proposal/regenerate"
+            hx-target="body"
+            hx-confirm="Regenerate the proposal? Your edits will be lost."
+            class="contrast"
+            formnovalidate>
+      Regenerate proposal
+    </button>
+    <button type="submit">Finalize taxonomy</button>
+  </div>
+</form>
+{% endblock %}

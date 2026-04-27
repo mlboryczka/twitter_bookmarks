@@ -1,0 +1,30 @@
+{% set idx = loop.index0 if loop is defined else 0 %}
+<article class="card category-row">
+  <input type="hidden" name="slug[]" value="{{ cat.slug if cat else '' }}">
+  <label>
+    Name
+    <input type="text" name="name[]" value="{{ cat.name if cat else '' }}" required>
+  </label>
+  <label>
+    Description (used in classifier prompt)
+    <textarea name="description[]" rows="2" required>{{ cat.description if cat else '' }}</textarea>
+  </label>
+  {% if cat and cat.rationale %}
+    <p class="meta"><strong>Why this category:</strong> {{ cat.rationale }}</p>
+  {% endif %}
+  {% if cat and cat.examples %}
+    <details>
+      <summary>{{ cat.examples|length }} example bookmark(s)</summary>
+      <ul>
+        {% for ex in cat.examples %}
+          <li><a href="https://x.com/i/web/status/{{ ex.tweet_id }}" target="_blank" rel="noopener">@{{ ex.username }}</a>: {{ ex.text }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% endif %}
+  <button type="button"
+          class="secondary"
+          onclick="this.closest('.category-row').remove()">
+    Delete this category
+  </button>
+</article>

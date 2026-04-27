@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Classifying bookmarks — twitter_bookmarks{% endblock %}
+{% block content %}
+<h1>Classifying your bookmarks…</h1>
+<p>Claude Haiku is reading each bookmark and assigning it to a category.
+This typically takes 30s-2min depending on how many bookmarks you have.</p>
+
+<div id="status"
+     hx-get="/setup/status"
+     hx-trigger="every 3s"
+     hx-swap="innerHTML">
+  <p>Starting up…</p>
+</div>
+
+<script>
+  document.addEventListener('htmx:afterSwap', function(evt) {
+    const redirect = evt.detail.target.dataset.redirect;
+    if (redirect) {
+      window.location.href = redirect;
+    }
+  });
+</script>
+{% endblock %}
