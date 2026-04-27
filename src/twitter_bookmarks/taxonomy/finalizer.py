@@ -213,6 +213,9 @@ async def finalize_taxonomy(
         feedback_text = move.get("feedback") or ""
         if not tweet_id or not to_slug:
             continue
+        if tweet_id not in valid_tweet_ids:
+            # Hallucinated tweet_id from Sonnet — skip the move/feedback.
+            continue
 
         # The classification we already wrote should be at the to_slug.
         # Mark it corrected and set previous_category_id to the from_slug
