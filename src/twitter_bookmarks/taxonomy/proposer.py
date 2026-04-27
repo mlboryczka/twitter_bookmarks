@@ -441,3 +441,30 @@ def apply_move(
         }
     )
     return (from_slug, to_slug)
+
+
+def apply_merge(
+    payload: TaxonomyProposalPayload,
+    source_slug: str,
+    target_slug: str,
+) -> int:
+    """Merge `source_slug`'s bookmarks into `target_slug`, drop `source_slug`.
+
+    Returns the number of bookmarks moved. Merges don't write feedback
+    rows — Sonnet split too finely, the bookmarks weren't miscategorized.
+    Raises ValueError if either slug is unknown or they're the same.
+    """
+    if source_slug == target_slug:
+        raise ValueError("Source and target slugs must differ")
+    source = next((c for c in payload.categories if c.slug == source_slug), None)
+    target = next((c for c in payload.categories if c.slug == target_slug), None)
+    if source is None:
+        raise ValueError(f"Unknown source slug: {source_slug}")
+    if target is None:
+        raise ValueError(f"Unknown target slug: {target_slug}")
+
+    moved = len(source.bookmarks)
+    target.bookmarks.extend(source.bookmarks)
+    source.bookmarks = []
+    payload.categories = [c for c in payload.categories if c.slug != source_slug]
+    return moved

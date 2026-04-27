@@ -41,6 +41,25 @@
           <p class="meta"><em>Why this category:</em> {{ cat.rationale }}</p>
         {% endif %}
 
+        <div class="controls" style="margin-bottom: 0.75em;">
+          <input type="hidden" name="source_slug" value="{{ cat.slug }}" form="">
+          <select name="target_slug" form="" aria-label="merge this category into">
+            <option value="">merge this category into…</option>
+            {% for other in proposal.categories %}
+              {% if other.slug != cat.slug %}
+                <option value="{{ other.slug }}">{{ other.name }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+          <button type="button"
+                  class="secondary"
+                  hx-post="/setup/proposal/merge"
+                  hx-include="closest .controls"
+                  hx-confirm="Merge {{ cat.name }} ({{ cat.bookmarks|length }} bookmarks) into the selected category? The {{ cat.name }} category will be removed.">
+            merge
+          </button>
+        </div>
+
         <div class="bookmarks">
           {% for bm in cat.bookmarks %}
             <div class="bm-card">

@@ -43,6 +43,7 @@ from twitter_bookmarks.taxonomy.finalizer import (
 )
 from twitter_bookmarks.taxonomy.proposer import (
     TaxonomyProposalPayload,
+    apply_merge,
     apply_move,
     get_active_draft,
     propose_taxonomy,
@@ -297,6 +298,33 @@ async def proposal_move(
     # HTMX: return empty body + tell the client to refresh the page so the
     # bookmark renders under its new category. Simpler than re-rendering
     # individual sections.
+    return HTMLResponse("", headers={"HX-Refresh": "true"})
+
+
+@router.post("/setup/proposal/merge", response_class=HTMLResponse)
+async def proposal_merge(
+    _user: AuthedUser,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    source_slug: Annotated[str, Form()],
+    target_slug: Annotated[str, Form()],
+) -> HTMLResponse:
+    """Merge source category into target category in the active draft."""
+    if not source_slug.strip() or not target_slug.strip():
+        return HTMLResponse("", status_code=204)
+    if source_slug == target_slug:
+        return HTMLResponse("Source and target must differ", status_code=400)
+
+    draft = await get_active_draft(session)
+    if draft is None:
+        return HTMLResponse("No active draft", status_code=400)
+
+    payload = TaxonomyProposalPayload.model_validate(draft.proposal_json or {})
+    try:
+        apply_merge(payload, source_slug, target_slug)
+    except ValueError as exc:
+        return HTMLResponse(f"Invalid merge: {exc}", status_code=400)
+
+    draft.proposal_json = payload.model_dump()
     return HTMLResponse("", headers={"HX-Refresh": "true"})
 
 
