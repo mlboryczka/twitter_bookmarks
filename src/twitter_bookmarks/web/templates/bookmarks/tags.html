@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Tags — twitter_bookmarks{% endblock %}
+{% block content %}
+<nav>
+  <ul>
+    <li><a href="/digest">Digest archive</a></li>
+    <li><a href="/bookmarks">Browse</a></li>
+    <li><a href="/tags">Tags</a></li>
+    <li><a href="/health">Health</a></li>
+  </ul>
+</nav>
+
+<h1>Sub-tags</h1>
+<p class="meta">Free-form lowercase keywords assigned by the classifier alongside the main category.</p>
+
+{% for tag, count in tags %}
+  <a href="/bookmarks?sub_tag={{ tag }}" class="chip">{{ tag }} <small>({{ count }})</small></a>
+{% else %}
+  <p>No tags yet.</p>
+{% endfor %}
+{% endblock %}

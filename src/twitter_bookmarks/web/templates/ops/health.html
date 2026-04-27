@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Health — twitter_bookmarks{% endblock %}
+{% block content %}
+<nav>
+  <ul>
+    <li><a href="/digest">Digest archive</a></li>
+    <li><a href="/bookmarks">Browse</a></li>
+    <li><a href="/tags">Tags</a></li>
+    <li><a href="/health">Health</a></li>
+  </ul>
+</nav>
+
+<h1>Health</h1>
+
+<dl>
+  <dt>Database</dt><dd>{% if health.db_ok %}OK{% else %}<strong>FAIL</strong>{% endif %}</dd>
+  <dt>Setup phase</dt><dd>{{ health.setup_phase }}</dd>
+  <dt>Total bookmarks</dt><dd>{{ health.bookmarks_total }}</dd>
+  <dt>Total classified</dt><dd>{{ health.classified_total }}</dd>
+  <dt>Feedback corrections (30d)</dt><dd>{{ health.feedback_count_30d }}</dd>
+  <dt>Last digest sent</dt><dd>{{ health.last_digest_sent or "never" }}</dd>
+  <dt>API cost (last 24h)</dt><dd>${{ "%.4f" | format(health.cost_24h_usd) }}</dd>
+  <dt>API cost (all time)</dt><dd>${{ "%.4f" | format(health.cost_total_usd) }}</dd>
+</dl>
+
+<h2>Last bookmark pull</h2>
+{% if health.last_pull %}
+  <pre>{{ health.last_pull | tojson(indent=2) }}</pre>
+{% else %}
+  <p>No pull recorded yet.</p>
+{% endif %}
+{% endblock %}

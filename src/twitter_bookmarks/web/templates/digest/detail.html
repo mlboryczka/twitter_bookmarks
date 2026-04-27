@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ digest.subject }} — twitter_bookmarks{% endblock %}
+{% block content %}
+<nav>
+  <ul>
+    <li><a href="/digest">← Back to archive</a></li>
+  </ul>
+</nav>
+
+<h1>{{ digest.subject }}</h1>
+<p class="meta">{{ digest.period_start }} → {{ digest.period_end }} ·
+{{ digest.bookmark_count }} bookmarks</p>
+
+{# The digest html_body is pre-rendered email HTML and is safe to inline. #}
+<article>
+  {{ digest.html_body | safe }}
+</article>
+{% endblock %}

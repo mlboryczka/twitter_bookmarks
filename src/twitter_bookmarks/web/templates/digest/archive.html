@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Digest archive — twitter_bookmarks{% endblock %}
+{% block content %}
+<nav>
+  <ul>
+    <li><a href="/digest">Digest archive</a></li>
+    <li><a href="/bookmarks">Browse</a></li>
+    <li><a href="/tags">Tags</a></li>
+    <li><a href="/health">Health</a></li>
+  </ul>
+</nav>
+
+<h1>Digest archive</h1>
+<p class="meta">Weekly digests sent every Monday at 8am ET.</p>
+
+{% for digest in digests %}
+  <article class="card">
+    <header>
+      <strong><a href="/digest/{{ digest.id }}">{{ digest.subject }}</a></strong>
+    </header>
+    <p class="meta">
+      {{ digest.period_start }} → {{ digest.period_end }} ·
+      {{ digest.bookmark_count }} bookmarks ·
+      {% if digest.email_status == 'sent' %}sent{% else %}{{ digest.email_status }}{% endif %}
+    </p>
+  </article>
+{% else %}
+  <p>No digests yet. The first one will be sent on Monday.</p>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Bookmarks — twitter_bookmarks{% endblock %}
+{% block content %}
+<nav>
+  <ul>
+    <li><a href="/digest">Digest archive</a></li>
+    <li><a href="/bookmarks">Browse</a></li>
+    <li><a href="/tags">Tags</a></li>
+    <li><a href="/health">Health</a></li>
+  </ul>
+</nav>
+
+<h1>Bookmarks ({{ total }})</h1>
+
+<form method="get" action="/bookmarks" style="display: flex; gap: 0.5em; align-items: end;">
+  <label>
+    Category
+    <select name="category" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for cat in all_categories %}
+        <option value="{{ cat.slug }}" {% if category == cat.slug %}selected{% endif %}>{{ cat.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% if sub_tag %}
+    <p>Filtered by sub-tag: <span class="chip">{{ sub_tag }}</span> <a href="/bookmarks{% if category %}?category={{ category }}{% endif %}">clear</a></p>
+  {% endif %}
+</form>
+
+{% for bookmark in bookmarks %}
+  <div id="card-{{ bookmark.tweet_id }}">
+    {% include "bookmarks/_card.html" %}
+  </div>
+{% else %}
+  <p>No bookmarks match.</p>
+{% endfor %}
+
+<nav style="margin-top: 1em; display: flex; gap: 0.5em;">
+  {% if has_prev %}
+    <a href="?page={{ page - 1 }}{% if category %}&category={{ category }}{% endif %}{% if sub_tag %}&sub_tag={{ sub_tag }}{% endif %}">← Prev</a>
+  {% endif %}
+  <span class="meta">Page {{ page }}</span>
+  {% if has_next %}
+    <a href="?page={{ page + 1 }}{% if category %}&category={{ category }}{% endif %}{% if sub_tag %}&sub_tag={{ sub_tag }}{% endif %}">Next →</a>
+  {% endif %}
+</nav>
+{% endblock %}
