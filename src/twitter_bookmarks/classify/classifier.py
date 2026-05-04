@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from anthropic import AsyncAnthropic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -153,6 +153,15 @@ class _ToolPayload(BaseModel):
     sub_tags: list[str] = Field(default_factory=list)
     gist: str
     reasoning: str
+
+    @field_validator("sub_tags", mode="before")
+    @classmethod
+    def _coerce_sub_tags(cls, v: Any) -> Any:
+        # Haiku sometimes ignores the array schema and returns a single
+        # comma-separated string. Split it rather than crash the classifier.
+        if isinstance(v, str):
+            return [t.strip() for t in v.split(",") if t.strip()]
+        return v
 
 
 def _format_taxonomy(categories: list[Category]) -> str:
