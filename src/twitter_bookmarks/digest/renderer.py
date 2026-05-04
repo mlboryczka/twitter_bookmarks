@@ -7,6 +7,7 @@ plain-text-ish version we keep for the archive's source-of-truth.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy import select
@@ -111,6 +112,23 @@ def _escape_html(text: str) -> str:
     )
 
 
+_HANDLE_RE = re.compile(r"(?<![A-Za-z0-9_])@([A-Za-z0-9_]{1,15})\b")
+
+
+def _linkify_handles(html: str) -> str:
+    """Wrap @handle mentions in HTML with anchor tags pointing at the X profile.
+
+    Operates on already-rendered HTML; safe because the regex requires a
+    word-boundary before the @, so it won't touch attributes or existing
+    href values.
+    """
+    return _HANDLE_RE.sub(
+        r'<a href="https://x.com/\1" '
+        r'style="color: #007aff; text-decoration: none;">@\1</a>',
+        html,
+    )
+
+
 async def render_html(
     session: AsyncSession,
     digest: Digest,
@@ -146,16 +164,18 @@ async def render_html(
             f'border-bottom: 1px solid #e0e0e0; padding-bottom: 4px;">'
             f'{_escape_html(cat_name)}</h2>'
         )
-        # Render synthesis markdown to HTML.
-        synthesis_html = md.markdown(section.synthesis, extensions=["extra"])
+        # Render synthesis markdown to HTML, then linkify @handles.
+        synthesis_html = _linkify_handles(
+            md.markdown(section.synthesis, extensions=["extra"])
+        )
         body_parts.append(
             f'<div style="font-size: 15px; line-height: 1.5;">{synthesis_html}</div>'
         )
 
         # Model-update tier — boxed callout so it's visually distinct.
         if section.model_update_text:
-            update_html = md.markdown(
-                section.model_update_text, extensions=["extra"]
+            update_html = _linkify_handles(
+                md.markdown(section.model_update_text, extensions=["extra"])
             )
             body_parts.append(
                 '<div style="background: #f5f8ff; border-left: 3px solid '
@@ -181,13 +201,16 @@ async def render_html(
             if b["gist"]:
                 gist_html = (
                     f'<div style="margin-top: 4px; color: #444; font-size: 13px;">'
-                    f'{md.markdown(b["gist"], extensions=["extra"])}</div>'
+                    f'{_linkify_handles(md.markdown(b["gist"], extensions=["extra"]))}'
+                    f'</div>'
                 )
             body_parts.append(
                 f'<li style="margin-bottom: 12px; font-size: 14px;">'
                 f'<a href="{b["url"]}" style="color: #007aff; text-decoration: none;">'
                 f'@{_escape_html(b["username"])}</a>: '
-                f'{_escape_html(text)}'
+                f'{_escape_html(text)} '
+                f'<a href="{b["url"]}" style="color: #6e6e73; font-size: 12px; '
+                f'text-decoration: none; white-space: nowrap;">view →</a>'
                 f'{gist_html}'
                 f'</li>'
             )
