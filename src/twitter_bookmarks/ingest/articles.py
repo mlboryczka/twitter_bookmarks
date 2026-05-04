@@ -89,6 +89,46 @@ def _expanded_urls(tweet_entities: dict[str, Any] | None) -> list[str]:
     return urls
 
 
+def _lxml_fallback(html: str) -> str | None:
+    """Extract visible text when trafilatura gives up.
+
+    Job postings, event pages, GitHub READMEs, forms — these have content
+    we want but trafilatura's article-detection heuristics reject them.
+    Pulls text from <main>/<article> if present, else from all <p>/<li>.
+    """
+    try:
+        from lxml import html as lxml_html
+    except ImportError:
+        return None
+    try:
+        tree = lxml_html.fromstring(html)
+    except Exception:
+        return None
+
+    # Strip noise.
+    for tag in tree.xpath(
+        "//script | //style | //nav | //footer | //header | //aside | //form"
+    ):
+        tag.drop_tree()
+
+    # Prefer <main> or <article> if present.
+    candidates = tree.xpath("//main") or tree.xpath("//article")
+    if candidates:
+        text = candidates[0].text_content()
+    else:
+        # Fall back to concatenating all p/li text on the page.
+        chunks = [
+            el.text_content()
+            for el in tree.xpath("//p | //li | //h1 | //h2 | //h3")
+        ]
+        text = "\n".join(c.strip() for c in chunks if c and c.strip())
+
+    cleaned = "\n".join(
+        line.strip() for line in text.splitlines() if line.strip()
+    )
+    return cleaned if len(cleaned) > 200 else None
+
+
 async def _fetch_one(
     client: httpx.AsyncClient, url: str
 ) -> str | None:
@@ -116,10 +156,18 @@ async def _fetch_one(
         )
     except Exception:
         logger.exception("trafilatura failed on %s", url)
-        return None
-    if not extracted:
-        return None
-    return extracted.strip()
+        extracted = None
+
+    if extracted and len(extracted.strip()) > 200:
+        return extracted.strip()
+
+    # trafilatura missed it (job page, event page, repo, form). Try lxml.
+    fallback = _lxml_fallback(html)
+    if fallback:
+        logger.info("lxml fallback used for %s (%d chars)", url, len(fallback))
+        return fallback
+
+    return None
 
 
 async def _collect_urls_with_quoted(
