@@ -6,7 +6,9 @@
       <span class="chip">corrected</span>
     {% endif %}
   </header>
-  <p>{{ bookmark.gist }}</p>
+  {% if bookmark.gist %}
+    <div>{{ bookmark.gist | markdown }}</div>
+  {% endif %}
   <p class="meta" style="font-size: 0.85em;">{{ bookmark.text_excerpt }}</p>
   <div>
     <span class="chip category">{{ bookmark.category_name }}</span>

@@ -11,8 +11,25 @@
 <p class="meta">{{ digest.period_start }} → {{ digest.period_end }} ·
 {{ digest.bookmark_count }} bookmarks</p>
 
-{# The digest html_body is pre-rendered email HTML and is safe to inline. #}
+{# The digest html_body is pre-rendered email HTML — already includes
+   per-tweet synopses and the model-update tier where applicable. #}
 <article>
   {{ digest.html_body | safe }}
 </article>
+
+{% if sections %}
+<aside style="margin-top: 2em; padding-top: 1em; border-top: 1px solid var(--pico-muted-border-color);">
+  <h3>Baseline views referenced</h3>
+  <p class="meta">The model-update tier in this digest compared the week's bookmarks to these baselines.</p>
+  {% for section in sections %}
+    {% if section.model_update_text %}
+      <details>
+        <summary><strong>{{ section.category.name }}</strong></summary>
+        <p class="meta"><em>Composed {{ section.composed_at.strftime('%Y-%m-%d') if section.composed_at else '' }}</em></p>
+        <div>{{ section.model_update_text | markdown }}</div>
+      </details>
+    {% endif %}
+  {% endfor %}
+</aside>
+{% endif %}
 {% endblock %}

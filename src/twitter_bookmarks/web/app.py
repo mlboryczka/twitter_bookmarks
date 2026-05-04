@@ -6,9 +6,11 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Annotated
 
+import markdown as md
 from fastapi import Depends, FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from markupsafe import Markup
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from twitter_bookmarks.config import get_settings
@@ -20,6 +22,13 @@ from twitter_bookmarks.web.routes import bookmarks as bookmarks_routes
 from twitter_bookmarks.web.routes import digest as digest_routes
 from twitter_bookmarks.web.routes import ops as ops_routes
 from twitter_bookmarks.web.routes import setup as setup_routes
+
+
+def _markdown_filter(text: str | None) -> Markup:
+    """Render trusted markdown (LLM output) to HTML for templates."""
+    if not text:
+        return Markup("")
+    return Markup(md.markdown(text, extensions=["extra"]))
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +63,18 @@ def create_app() -> FastAPI:
         StaticFiles(directory="src/twitter_bookmarks/web/static"),
         name="static",
     )
+
+    # Register markdown filter on every Jinja2Templates instance the
+    # routers use. Their `env.filters` is the mutable Jinja env config.
+    for routes_module in (
+        setup_routes,
+        bookmarks_routes,
+        digest_routes,
+        ops_routes,
+    ):
+        templates = getattr(routes_module, "templates", None)
+        if templates is not None:
+            templates.env.filters["markdown"] = _markdown_filter
 
     app.include_router(setup_routes.router)
     app.include_router(bookmarks_routes.router)
