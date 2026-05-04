@@ -356,3 +356,16 @@ async def run_incremental_pull_job() -> None:
         logger.info("Classified %d new bookmarks", classified)
     except Exception:
         logger.exception("Post-pull classification failed")
+
+    # Synopsize new bookmarks so they're ready for the weekly digest.
+    try:
+        from twitter_bookmarks.synopsis.per_tweet import (
+            synopsize_recent_bookmarks,
+        )
+
+        # age_days=2 catches anything ingested in the last couple of days
+        # without re-synopsizing the whole month every pull.
+        s_summary = await synopsize_recent_bookmarks(age_days=2)
+        logger.info("Synopsized %s", s_summary)
+    except Exception:
+        logger.exception("Post-pull synopsis failed")
