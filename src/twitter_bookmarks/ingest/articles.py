@@ -89,12 +89,33 @@ def _expanded_urls(tweet_entities: dict[str, Any] | None) -> list[str]:
     return urls
 
 
-def _lxml_fallback(html: str) -> str | None:
-    """Extract visible text when trafilatura gives up.
+_BOILERPLATE_TOKENS = (
+    "sign in",
+    "subscribe",
+    "explore events",
+    "presented by",
+    "hosted by",
+    "featured in",
+    "cookie",
+    "accept all",
+    "manage preferences",
+    "log in",
+)
 
-    Job postings, event pages, GitHub READMEs, forms — these have content
-    we want but trafilatura's article-detection heuristics reject them.
-    Pulls text from <main>/<article> if present, else from all <p>/<li>.
+
+def _lxml_fallback(html: str) -> str | None:
+    """Extract usable text when trafilatura gives up.
+
+    Strategy, in order:
+      1. Concatenate og:title + og:description + meta description.
+         These are explicitly authored for link previews and capture the
+         page's substance in 1-3 sentences. Used for SPA pages and most
+         article pages where trafilatura misses.
+      2. Pull text from <main>/<article> if present, after stripping nav.
+      3. Concatenate <p>/<li>/<h1-3> text from the rest of the body.
+
+    Returns None if the result looks like boilerplate (mostly sign-in /
+    subscribe prompts) or is too short to be useful.
     """
     try:
         from lxml import html as lxml_html
@@ -105,28 +126,57 @@ def _lxml_fallback(html: str) -> str | None:
     except Exception:
         return None
 
-    # Strip noise.
+    # 1. Meta tags — clean, authored summaries.
+    og_title = tree.xpath("//meta[@property='og:title']/@content")
+    og_desc = tree.xpath("//meta[@property='og:description']/@content")
+    meta_desc = tree.xpath("//meta[@name='description']/@content")
+    twitter_desc = tree.xpath("//meta[@name='twitter:description']/@content")
+
+    meta_parts: list[str] = []
+    if og_title:
+        meta_parts.append(og_title[0].strip())
+    desc = (og_desc or twitter_desc or meta_desc)
+    if desc:
+        meta_parts.append(desc[0].strip())
+    meta_text = "\n".join(p for p in meta_parts if p)
+
+    # 2/3. Body text. Strip noise first.
     for tag in tree.xpath(
         "//script | //style | //nav | //footer | //header | //aside | //form"
     ):
         tag.drop_tree()
-
-    # Prefer <main> or <article> if present.
     candidates = tree.xpath("//main") or tree.xpath("//article")
     if candidates:
-        text = candidates[0].text_content()
+        body_text = candidates[0].text_content()
     else:
-        # Fall back to concatenating all p/li text on the page.
         chunks = [
             el.text_content()
             for el in tree.xpath("//p | //li | //h1 | //h2 | //h3")
         ]
-        text = "\n".join(c.strip() for c in chunks if c and c.strip())
+        body_text = "\n".join(c.strip() for c in chunks if c and c.strip())
 
-    cleaned = "\n".join(
-        line.strip() for line in text.splitlines() if line.strip()
+    body_clean = "\n".join(
+        line.strip() for line in body_text.splitlines() if line.strip()
     )
-    return cleaned if len(cleaned) > 200 else None
+
+    # Combine meta + body. Meta first because it's authored summary.
+    combined = meta_text
+    if body_clean:
+        combined = f"{combined}\n\n{body_clean}" if combined else body_clean
+
+    if not combined:
+        return None
+
+    # Boilerplate guard: if the page is mostly nav prompts, the lower-cased
+    # boilerplate tokens dominate the content. Reject when the unique text
+    # outside the boilerplate is < 150 chars.
+    lower = combined.lower()
+    boilerplate_chars = sum(lower.count(tok) * len(tok) for tok in _BOILERPLATE_TOKENS)
+    informative_chars = max(0, len(combined) - boilerplate_chars)
+    if informative_chars < 150:
+        return None
+
+    return combined
 
 
 async def _fetch_one(
