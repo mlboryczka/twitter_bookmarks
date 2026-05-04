@@ -35,6 +35,7 @@ async def _hydrate_section_bookmarks(
             select(
                 Tweet.tweet_id,
                 Tweet.text,
+                Tweet.created_at,
                 Author.username,
                 BookmarkClassification.gist,
             )
@@ -47,19 +48,27 @@ async def _hydrate_section_bookmarks(
         )
     ).all()
     by_id = {
-        tid: {"text": text, "username": username, "gist": gist}
-        for tid, text, username, gist in rows
+        tid: {
+            "text": text,
+            "created_at": created_at,
+            "username": username,
+            "gist": gist,
+        }
+        for tid, text, created_at, username, gist in rows
     }
     out = []
     for tid in section.bookmark_tweet_ids:
         meta = by_id.get(tid, {})
+        username = meta.get("username") or "unknown"
         out.append(
             {
                 "tweet_id": tid,
                 "text": meta.get("text") or "",
-                "username": meta.get("username") or "unknown",
+                "created_at": meta.get("created_at"),
+                "username": username,
                 "gist": meta.get("gist") or "",
-                "url": f"https://x.com/i/web/status/{tid}",
+                "url": f"https://x.com/{username}/status/{tid}",
+                "profile_url": f"https://x.com/{username}",
             }
         )
     return out
@@ -96,7 +105,13 @@ async def render_markdown(
             text = (b["text"] or "").strip().replace("\n", " ")
             if len(text) > 280:
                 text = text[:280] + "…"
-            parts.append(f"- [@{b['username']}]({b['url']}): {text}")
+            date_str = (
+                b["created_at"].strftime("%Y-%m-%d") if b["created_at"] else ""
+            )
+            date_link = f" · [{date_str}]({b['url']})" if date_str else f" · [view]({b['url']})"
+            parts.append(
+                f"- [@{b['username']}]({b['profile_url']}){date_link}: {text}"
+            )
             if b["gist"]:
                 parts.append(f"  - {b['gist']}")
         parts.append("")
@@ -204,13 +219,19 @@ async def render_html(
                     f'{_linkify_handles(md.markdown(b["gist"], extensions=["extra"]))}'
                     f'</div>'
                 )
+            date_str = (
+                b["created_at"].strftime("%b %-d, %Y") if b["created_at"] else ""
+            )
+            date_link_text = date_str or "view"
             body_parts.append(
                 f'<li style="margin-bottom: 12px; font-size: 14px;">'
-                f'<a href="{b["url"]}" style="color: #007aff; text-decoration: none;">'
-                f'@{_escape_html(b["username"])}</a>: '
-                f'{_escape_html(text)} '
+                f'<a href="{b["profile_url"]}" style="color: #007aff; '
+                f'text-decoration: none;">'
+                f'@{_escape_html(b["username"])}</a> '
                 f'<a href="{b["url"]}" style="color: #6e6e73; font-size: 12px; '
-                f'text-decoration: none; white-space: nowrap;">view →</a>'
+                f'text-decoration: none; white-space: nowrap;">'
+                f'· {_escape_html(date_link_text)} →</a>: '
+                f'{_escape_html(text)}'
                 f'{gist_html}'
                 f'</li>'
             )
