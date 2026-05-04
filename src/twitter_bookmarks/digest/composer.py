@@ -228,6 +228,19 @@ async def compose_digest(
     session.add(digest)
     await session.flush()
 
+    # Refresh stale baselines first so the model-update tier reflects
+    # the latest interpretation of the user's older bookmarks.
+    try:
+        from twitter_bookmarks.synopsis.baseline import refresh_all_baselines
+
+        refresh_summary = await refresh_all_baselines()
+        logger.info("Baseline refresh: %s", refresh_summary)
+    except Exception:
+        logger.exception("Baseline refresh failed — proceeding without")
+
+    from twitter_bookmarks.synopsis.baseline import latest_baseline
+    from twitter_bookmarks.synopsis.model_update import generate_model_update
+
     for cat in categories:
         cat_bookmarks = by_category.get(cat.id) or []
         if not cat_bookmarks:
@@ -243,10 +256,45 @@ async def compose_digest(
                 f"_(Synthesis failed; {len(cat_bookmarks)} bookmarks in this "
                 "category are listed below.)_"
             )
+
+        # Model-update tier: only for categories opted in AND with a baseline.
+        model_update_text: str | None = None
+        baseline_view_id: int | None = None
+        if cat.enable_model_update:
+            try:
+                baseline = await latest_baseline(session, cat.id)
+                if baseline is not None:
+                    update_input = [
+                        {
+                            "tweet_id": b["tweet_id"],
+                            "username": b["username"],
+                            "gist": b["gist"] or "",
+                            "text_excerpt": (b["text"] or "")[:400],
+                        }
+                        for b in cat_bookmarks
+                    ]
+                    model_update_text = await generate_model_update(
+                        session, cat, baseline, update_input
+                    )
+                    baseline_view_id = baseline.id
+                else:
+                    logger.info(
+                        "No baseline for %s — skipping model-update tier",
+                        cat.slug,
+                    )
+            except Exception:
+                logger.exception(
+                    "Model-update synthesis failed for %s; section will "
+                    "render with synopses only",
+                    cat.slug,
+                )
+
         section = DigestSection(
             digest_id=digest.id,
             category_id=cat.id,
             synthesis=synthesis,
+            model_update_text=model_update_text,
+            baseline_view_id=baseline_view_id,
             bookmark_tweet_ids=[b["tweet_id"] for b in cat_bookmarks],
         )
         session.add(section)
