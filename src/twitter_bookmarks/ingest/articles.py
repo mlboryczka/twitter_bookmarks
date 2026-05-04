@@ -208,27 +208,28 @@ async def enrich_all_bookmarks(
     force: bool = False,
     concurrency: int = 5,
 ) -> dict[str, int]:
-    """Enrich every bookmarked tweet that has at least one URL.
+    """Enrich every bookmarked tweet that has any fetchable URL.
+
+    "Fetchable URL" includes URLs on quoted/replied-to tweets, so a
+    bookmark that just quotes another tweet still gets the original's
+    article fetched. The actual URL inspection happens inside
+    `enrich_tweet` (cheaper than walking it twice here).
 
     Runs `concurrency` fetches in parallel. Returns counts.
     """
     async with session_scope() as session:
         rows = (
             await session.execute(
-                select(Tweet.tweet_id, Tweet.entities, Tweet.article_text)
+                select(Tweet.tweet_id, Tweet.article_text)
                 .join(Bookmark, Bookmark.tweet_id == Tweet.tweet_id)
             )
         ).all()
 
-    candidates = [
-        tid
-        for tid, entities, existing in rows
-        if _expanded_urls(entities) and (force or not existing)
-    ]
+    candidates = [tid for tid, existing in rows if force or not existing]
     if not candidates:
         return {"candidates": 0, "enriched": 0, "skipped": 0}
 
-    logger.info("Enriching %d bookmarks with article text", len(candidates))
+    logger.info("Enriching up to %d bookmarks with article text", len(candidates))
     sem = asyncio.Semaphore(concurrency)
     enriched = 0
     skipped = 0
