@@ -170,6 +170,7 @@ async def synopsize_bookmark(
                 BookmarkThread.full_thread_text,
                 Tweet.article_text,
             )
+            .select_from(Bookmark)
             .join(Tweet, Tweet.tweet_id == Bookmark.tweet_id)
             .join(Author, Author.author_id == Tweet.author_id)
             .outerjoin(
