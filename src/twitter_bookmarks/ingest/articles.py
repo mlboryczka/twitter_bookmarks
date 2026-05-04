@@ -28,12 +28,33 @@ from twitter_bookmarks.db.session import session_scope
 logger = logging.getLogger(__name__)
 
 # Per-URL caps and timeouts
-PER_URL_TIMEOUT_S = 10.0
+PER_URL_TIMEOUT_S = 15.0
 PER_URL_MAX_BYTES = 2_000_000  # 2 MB
 MAX_TOTAL_CHARS = 3000  # cap stored article_text per tweet
+
+# Look like a real browser — most paywalled/cloudflare-protected sites
+# 403 the obvious "twitter_bookmarks/0.1" UA. Pretend to be desktop Safari.
 USER_AGENT = (
-    "Mozilla/5.0 (compatible; twitter_bookmarks/0.1; +https://github.com/mlboryczka/twitter_bookmarks)"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Version/17.4 Safari/605.1.15"
 )
+DEFAULT_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+}
 
 # Hosts we never try to fetch — they're either the tweet itself or
 # require auth, captcha, etc.
@@ -101,6 +122,43 @@ async def _fetch_one(
     return extracted.strip()
 
 
+async def _collect_urls_with_quoted(
+    session: AsyncSession, tweet: Tweet
+) -> list[str]:
+    """All fetchable URLs in a tweet, including its quoted/replied-to ancestors.
+
+    A bookmark like "🔥 quote: https://x.com/foo/status/123" has no article
+    URL on the leaf tweet — but the quoted tweet (id=123) often does. Walk
+    `referenced_tweets` to surface those.
+    """
+    urls: list[str] = list(_expanded_urls(tweet.entities))
+
+    refs = tweet.referenced_tweets or []
+    ref_ids = [
+        r.get("id")
+        for r in refs
+        if r.get("id") and r.get("type") in ("quoted", "replied_to")
+    ]
+    if ref_ids:
+        rows = (
+            await session.execute(
+                select(Tweet).where(Tweet.tweet_id.in_(ref_ids))
+            )
+        ).scalars().all()
+        for ref in rows:
+            urls.extend(_expanded_urls(ref.entities))
+
+    # Dedup, preserve order.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for u in urls:
+        if u in seen:
+            continue
+        seen.add(u)
+        unique.append(u)
+    return unique
+
+
 async def enrich_tweet(
     session: AsyncSession,
     tweet_id: str,
@@ -110,14 +168,16 @@ async def enrich_tweet(
     """Populate `tweets.article_text` for one tweet.
 
     Returns True if any text was stored. If `force=False` (default), skips
-    tweets that already have non-null article_text.
+    tweets that already have non-null article_text. Pulls URLs from the
+    bookmark itself AND any quoted/replied-to tweets so reposted articles
+    get fetched.
     """
     tweet = await session.get(Tweet, tweet_id)
     if tweet is None:
         return False
     if tweet.article_text and not force:
         return False
-    urls = _expanded_urls(tweet.entities)
+    urls = await _collect_urls_with_quoted(session, tweet)
     if not urls:
         return False
 
