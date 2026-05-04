@@ -83,9 +83,11 @@ class _BaselinePayload(BaseModel):
 
 
 def _system_prompt(category: Category) -> str:
+    from twitter_bookmarks.synopsis._style import WRITING_STYLE
+
     return (
         "You are reading the bookmarks one user has saved in a single "
-        f"category over time and writing their 'current view' — a "
+        "category over time and writing their 'current view' — a "
         "200-400 word synthesis that captures: (a) the topics within "
         "this category they consistently engage with, (b) the positions "
         "or framings they appear to favor, (c) the open questions or "
@@ -93,10 +95,12 @@ def _system_prompt(category: Category) -> str:
         f"CATEGORY: {category.name} ({category.slug})\n"
         f"CATEGORY DESCRIPTION: {category.description}\n\n"
         "This synthesis becomes the anchor for a weekly 'how does this "
-        "week's reading update my thinking' digest. Be concrete: name "
-        "the specific authors, claims, datasets, and debates that "
-        "appear repeatedly. Avoid generic statements that would apply "
-        "to any reader of this category. Avoid hedging. Avoid filler.\n\n"
+        "week's reading update my thinking' digest. Lead with the most "
+        "specific recurring claim or debate. Name the authors, products, "
+        "datasets, and arguments that appear repeatedly. Generic "
+        "statements that would apply to any reader of this category are "
+        "useless — cut them.\n\n"
+        f"{WRITING_STYLE}\n\n"
         "If the user has fewer than ~5 substantive bookmarks in this "
         "category, the corpus is too thin to write an honest baseline — "
         "call record_baseline_view with is_thin=true and an empty "

@@ -71,22 +71,21 @@ class _UpdatePayload(BaseModel):
 
 
 def _system_prompt(category: Category) -> str:
+    from twitter_bookmarks.synopsis._style import WRITING_STYLE
+
     return (
         "You are writing one week's reflection on how the user's "
         "bookmarks update their evolving view in a single category. "
         "You'll be given the user's CURRENT VIEW (a baseline) and this "
         "week's NEW BOOKMARKS with structured synopses.\n\n"
         f"CATEGORY: {category.name} ({category.slug})\n\n"
-        "Write 100-200 words covering:\n"
-        "- Which baseline positions does this week's reading reinforce, "
-        "  challenge, or refine?\n"
-        "- Are there new threads, debates, or framings this week "
-        "  introduces that aren't in the baseline?\n"
-        "- Reference @usernames for concrete points.\n\n"
-        "If the week's bookmarks don't materially change the view, say "
-        "that plainly (e.g., 'this week mostly extends prior threads on "
-        "X without introducing new framings'). Do not manufacture "
-        "insight. Do not hedge.\n\n"
+        "Output: 100-200 words. Lead with the strongest specific update "
+        "(e.g., 'X argues Y, which contradicts the baseline's claim that "
+        "Z'). Reference @usernames for every concrete point. If the "
+        "week's bookmarks don't materially shift the view, say so plainly "
+        "in one sentence and stop — do not manufacture insight to fill "
+        "the word count.\n\n"
+        f"{WRITING_STYLE}\n\n"
         "Always respond by calling the record_model_update tool."
     )
 

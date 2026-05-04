@@ -94,15 +94,23 @@ class _ToolPayload(BaseModel):
 
 
 def _system_prompt() -> str:
+    from twitter_bookmarks.synopsis._style import WRITING_STYLE
+
     return (
         "You are summarizing one X (Twitter) bookmark into a 3-sentence "
-        "structured synopsis: Claim, Evidence, Why-it-matters. Be concrete "
-        "and specific — quote a detail or number when the source provides "
-        "one. Avoid filler ('this tweet discusses', 'an interesting take "
-        "on', 'the author argues that'). Avoid hedging ('may suggest', "
-        "'could imply'). If the bookmark is just a URL with no extracted "
-        "article body, you do not have enough information to write an "
-        "honest synopsis — call record_synopsis with has_content=false.\n\n"
+        "structured synopsis: Claim, Evidence, Why-it-matters.\n\n"
+        "- Claim: one sentence stating what the bookmark argues, asserts, "
+        "or shows. Lead with the substance, not 'the author argues that…'\n"
+        "- Evidence: one sentence with the concrete detail, number, "
+        "quote, or example the bookmark cites. If it cites a number, "
+        "use the number. If it names a company, name the company.\n"
+        "- Why-it-matters: one sentence on the implication, contrast "
+        "with prior thinking, or open question raised.\n\n"
+        f"{WRITING_STYLE}\n\n"
+        "If the bookmark is just a URL with no extracted article body "
+        "and the tweet text alone is too thin (e.g., '👀'), call "
+        "record_synopsis with has_content=false. Don't fill in fake "
+        "content.\n\n"
         "Always respond by calling the record_synopsis tool. Do not "
         "produce any prose response — only call the tool."
     )

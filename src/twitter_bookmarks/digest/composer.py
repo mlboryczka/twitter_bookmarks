@@ -79,16 +79,18 @@ def _format_bookmarks_for_synthesis(rows: list[dict[str, Any]]) -> str:
 
 
 def _system_prompt() -> str:
+    from twitter_bookmarks.synopsis._style import WRITING_STYLE
+
     return (
         "You are writing one section of a weekly digest of the user's X "
         "bookmarks for one specific category. Your job is to find the "
-        "themes and through-lines across the week's bookmarks in this "
-        "category — not to summarize each one.\n\n"
-        "Write 2-4 short paragraphs in markdown. Call out specific "
-        "bookmarks by @username when an idea is concrete and worth "
-        "anchoring. Avoid filler ('this week was an interesting one'), "
-        "avoid hedging ('these bookmarks may suggest…'), and avoid "
-        "summarizing the category description back to the user.\n\n"
+        "themes and through-lines across the week's bookmarks — not to "
+        "summarize each one.\n\n"
+        "Output: 2-4 short paragraphs in markdown. Lead with the most "
+        "specific concrete claim from the week's bookmarks. Reference "
+        "@usernames when discussing a specific person's argument. If two "
+        "bookmarks disagree, surface the disagreement and name both.\n\n"
+        f"{WRITING_STYLE}\n\n"
         "Always respond by calling the record_synthesis tool. Do not "
         "produce any prose response — only call the tool."
     )
